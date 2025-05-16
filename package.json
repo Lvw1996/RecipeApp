@@ -1,0 +1,20 @@
+{
+  "name": "recipe-importer-api",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "axios": "^1.9.0",
+    "cheerio": "^1.0.0",
+    "express": "^5.1.0"
+    
+  }
+}
