@@ -31,32 +31,67 @@ export async function extractRecipeFromUrl(url) {
     })
     .find(r => r);
 
-  if (!recipeJson) throw new Error('No structured recipe found');
-  console.log('💡 Parsed JSON-LD scripts:', jsonLdScripts);
-  console.log('✅ Recipe JSON found:', recipeJson);
+  if (recipeJson) {
+    console.log('✅ Recipe JSON found from structured data');
+    return {
+      id: generateId(recipeJson.name),
+      title: recipeJson.name,
+      thumbnail: recipeJson.image?.[0] || recipeJson.image || '',
+      cookTime: parseDuration(recipeJson.cookTime),
+      prepTime: parseDuration(recipeJson.prepTime),
+      servings: parseInt(recipeJson.recipeYield) || 1,
+      difficulty: 'unknown',
+      cuisine: recipeJson.recipeCuisine || 'Unknown',
+      tags: recipeJson.keywords?.split(',').map(t => t.trim()) || [],
+      nutrition: {
+        calories: extractNutrition(recipeJson, 'calories'),
+        protein: extractNutrition(recipeJson, 'proteinContent'),
+        carbs: extractNutrition(recipeJson, 'carbohydrateContent'),
+        fat: extractNutrition(recipeJson, 'fatContent'),
+      },
+      ingredients: (recipeJson.recipeIngredient || []).map(item => ({
+        name: item,
+        quantity: 1,
+        unit: '',
+      })),
+      instructions: extractInstructions(recipeJson)
+    };
+  }
+
+  // 🔁 Fallback scraping
+  console.log('⚠️ Falling back to manual scrape');
+
+  const fallbackTitle = $('h1').first().text().trim() || 'Untitled Recipe';
+  const fallbackIngredients = $('[class*=ingredient], li:contains("ingredient")')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(Boolean);
+
+  const fallbackInstructions = $('[class*=instruction], [class*=step], li:contains("step")')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(Boolean);
+
+  const fallbackThumbnail = $('meta[property="og:image"]').attr('content') || '';
 
   return {
-    id: generateId(recipeJson.name),
-    title: recipeJson.name,
-    thumbnail: recipeJson.image?.[0] || recipeJson.image || '',
-    cookTime: parseDuration(recipeJson.cookTime),
-    prepTime: parseDuration(recipeJson.prepTime),
-    servings: parseInt(recipeJson.recipeYield) || 1,
+    id: generateId(fallbackTitle),
+    title: fallbackTitle,
+    thumbnail: fallbackThumbnail,
+    cookTime: 0,
+    prepTime: 0,
+    servings: 1,
     difficulty: 'unknown',
-    cuisine: recipeJson.recipeCuisine || 'Unknown',
-    tags: recipeJson.keywords?.split(',').map(t => t.trim()) || [],
+    cuisine: 'Unknown',
+    tags: [],
     nutrition: {
-      calories: extractNutrition(recipeJson, 'calories'),
-      protein: extractNutrition(recipeJson, 'proteinContent'),
-      carbs: extractNutrition(recipeJson, 'carbohydrateContent'),
-      fat: extractNutrition(recipeJson, 'fatContent'),
+      calories: 0,
+      protein: 0,
+      carbs: 0,
+      fat: 0,
     },
-    ingredients: (recipeJson.recipeIngredient || []).map(item => ({
-      name: item,
-      quantity: 1,
-      unit: '',
-    })),
-    instructions: extractInstructions(recipeJson)
+    ingredients: fallbackIngredients.map(name => ({ name, quantity: 1, unit: '' })),
+    instructions: fallbackInstructions
   };
 }
 
