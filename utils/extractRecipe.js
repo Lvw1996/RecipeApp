@@ -405,6 +405,48 @@ function extractThumbnail(image) {
   return image.url || '';
 }
 
+// Placeholder filename patterns that indicate a lazy-loaded or low-quality stand-in
+const PLACEHOLDER_PATTERN = /low[_-]?res|placeholder|template|blank|dummy|loading|spinner/i;
+
+function extractBestThumbnail($, titleHint = '') {
+  // 1. Standard OG / Twitter meta tags
+  const og = $('meta[property="og:image"]').attr('content');
+  if (og && !PLACEHOLDER_PATTERN.test(og)) return og;
+
+  const tw = $('meta[name="twitter:image"]').attr('content');
+  if (tw && !PLACEHOLDER_PATTERN.test(tw)) return tw;
+
+  // 2. <link rel="image_src"> (older WP themes)
+  const linkImg = $('link[rel="image_src"]').attr('href');
+  if (linkImg && !PLACEHOLDER_PATTERN.test(linkImg)) return linkImg;
+
+  // 3. First <img> inside common recipe/article content areas whose alt matches the title
+  const titleWords = titleHint.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+  let bestSrc = '';
+  $('article img, .entry-content img, .post-content img, .recipe img, main img').each((_, el) => {
+    if (bestSrc) return;
+    const src = $( el).attr('src') || $(el).attr('data-src') || $(el).attr('data-lazy-src') || '';
+    if (!src || PLACEHOLDER_PATTERN.test(src)) return;
+    const alt = ($(el).attr('alt') || '').toLowerCase();
+    if (titleWords.length && titleWords.some(w => alt.includes(w))) {
+      bestSrc = src;
+    }
+  });
+  if (bestSrc) return bestSrc;
+
+  // 4. Any large-looking img (has explicit width >= 300 or is in an uploads path) that isn't a placeholder
+  $('img').each((_, el) => {
+    if (bestSrc) return;
+    const src = $(el).attr('src') || $(el).attr('data-src') || '';
+    if (!src || PLACEHOLDER_PATTERN.test(src)) return;
+    const w = parseInt($(el).attr('width') || '0');
+    const isUpload = /\/uploads\/|\/images\/recipes?\//i.test(src);
+    if (w >= 300 || isUpload) bestSrc = src;
+  });
+
+  return bestSrc;
+}
+
 function generateId(title) {
   return String(title || 'recipe')
     .toLowerCase()
@@ -458,7 +500,10 @@ export async function extractRecipeFromUrl(url) {
       );
 
     const fallbackTitle = stripHtml(recipeNode.name) || 'Imported Recipe';
-    const fallbackThumbnail = extractThumbnail(recipeNode.image);
+    const jsonLdThumbnail = extractThumbnail(recipeNode.image);
+    const fallbackThumbnail = (jsonLdThumbnail && !PLACEHOLDER_PATTERN.test(jsonLdThumbnail))
+      ? jsonLdThumbnail
+      : extractBestThumbnail($, fallbackTitle);
     const htmlSectionRecipe = parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail);
     const htmlIngredients = Array.isArray(htmlSectionRecipe.ingredients) ? htmlSectionRecipe.ingredients : [];
     const htmlInstructions = Array.isArray(htmlSectionRecipe.instructions) ? htmlSectionRecipe.instructions : [];
@@ -495,7 +540,7 @@ export async function extractRecipeFromUrl(url) {
     $('meta[property="og:title"]').attr('content') ||
     'Untitled Recipe';
 
-  const fallbackThumbnail = $('meta[property="og:image"]').attr('content') || '';
+  const fallbackThumbnail = extractBestThumbnail($, fallbackTitle);
 
   const htmlSectionRecipe = parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail);
 
