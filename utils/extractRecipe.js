@@ -45,7 +45,7 @@ const UNIT_ALIASES = {
 };
 
 const PREP_NOTE_REGEX =
-  /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed)\b|^(?:to taste|for serving|as needed|room temp|at room temperature)/i;
+  /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|as needed|room temp|at room temperature)/i;
 
 function cleanUnit(raw) {
   const lower = String(raw || '').toLowerCase().trim();
@@ -61,6 +61,20 @@ function stripHtml(value) {
     .replace(/&quot;/g, '"')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function decodeEntities(value) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function asCleanLine(value) {
+  return stripHtml(decodeEntities(String(value || ''))).replace(/^[\s•\-–]+/, '').trim();
 }
 
 /**
@@ -139,10 +153,11 @@ function parseIngredientString(raw) {
 
   // --- Final name clean ---
   const name = remainder
+    .replace(/^of\s+/i, '')
     .replace(/\s+-\s+.*$/, '')
     .replace(/\b(?:to taste|for serving|as needed)\b.*$/i, '')
     .replace(/\s+/g, ' ')
-    .trim() || text.split(/[,(]/)[0].trim(); // safe fallback
+    .trim() || text.split(/[,(]/)[0].replace(/^of\s+/i, '').trim(); // safe fallback
 
   if (!name) return null;
 
@@ -225,6 +240,138 @@ function extractInstructions(json) {
   }
 
   return [];
+}
+
+function getSectionHtmlByHeading($, headingPattern) {
+  const headingRegex = new RegExp(`^(?:${headingPattern})$`, 'i');
+  const heading = $('h1,h2,h3,h4')
+    .filter((_, el) => headingRegex.test($(el).text().trim()))
+    .first();
+
+  if (!heading.length) return '';
+
+  let sectionHtml = '';
+  let current = heading.next();
+  while (current.length) {
+    if (/^h[1-4]$/i.test(current[0]?.tagName || '')) break;
+    sectionHtml += $.html(current);
+    current = current.next();
+  }
+
+  return sectionHtml;
+}
+
+function extractListItems(sectionHtml) {
+  if (!sectionHtml) return [];
+
+  const listItems = [...sectionHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)]
+    .map((m) => asCleanLine(m[1]))
+    .filter(Boolean);
+
+  if (listItems.length > 0) return listItems;
+
+  const plain = asCleanLine(sectionHtml.replace(/<[^>]+>/g, ' '));
+  if (!plain) return [];
+
+  const numbered = [...plain.matchAll(/(?:^|\s)(\d+)[.)]\s*([\s\S]*?)(?=(?:\s\d+[.)]\s)|$)/g)]
+    .map((m) => asCleanLine(m[2]))
+    .filter(Boolean);
+
+  return numbered;
+}
+
+function extractTextLines(sectionHtml) {
+  if (!sectionHtml) return [];
+
+  const withBreaks = sectionHtml
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h4|h5|h6)>/gi, '\n');
+
+  const plain = decodeEntities(withBreaks).replace(/<[^>]+>/g, ' ');
+
+  return plain
+    .split(/\n+/)
+    .map((line) => asCleanLine(line))
+    .filter(Boolean);
+}
+
+function isLikelyIngredientLine(line) {
+  const cleaned = asCleanLine(line);
+  if (!cleaned) return false;
+
+  const lower = cleaned.toLowerCase();
+  if (['us', 'metric', 'ingredients', 'method', 'instructions'].includes(lower)) return false;
+  if (/^(for\s+the\b|you\'ll\s+need\b)/i.test(cleaned)) return false;
+
+  if (/^\d/.test(cleaned)) return true;
+  if (/\b(cup|tsp|tbsp|g|kg|ml|l|oz|lb|pinch|egg|butter|flour|sugar|milk|salt|pepper|vanilla)\b/i.test(lower)) return true;
+  if (/^[a-z][a-z\s'\-]{2,30}$/i.test(cleaned) && cleaned.split(' ').length <= 4) return true;
+
+  return false;
+}
+
+function extractIngredientLinesFromSectionHtml(sectionHtml) {
+  if (!sectionHtml) return [];
+
+  const $$ = cheerio.load(`<section>${sectionHtml}</section>`);
+  const preferredPane =
+    $$('.tab-pane.show.active').first().length
+      ? $$('.tab-pane.show.active').first()
+      : $$('#metric').first().length
+      ? $$('#metric').first()
+      : $$('.tab-pane').first();
+
+  if (preferredPane.length) {
+    const paneLines = preferredPane
+      .find('p, li')
+      .map((_, el) => asCleanLine($$(el).text()))
+      .get()
+      .filter(Boolean)
+      .filter(isLikelyIngredientLine);
+
+    if (paneLines.length > 0) return paneLines;
+  }
+
+  let ingredientLines = extractListItems(sectionHtml);
+  const ingredientTextLines = extractTextLines(sectionHtml).filter(isLikelyIngredientLine);
+  if (ingredientLines.length === 0) {
+    ingredientLines = ingredientTextLines;
+  }
+
+  return ingredientLines;
+}
+
+function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
+  const methodSection = getSectionHtmlByHeading($, 'Method|Instructions?');
+  const ingredientsSection = getSectionHtmlByHeading($, 'Ingredients?');
+
+  let instructions = extractListItems(methodSection);
+  const methodLines = extractTextLines(methodSection);
+  if (instructions.length === 0 && methodLines.length > 0) {
+    instructions = methodLines
+      .map((line) => line.replace(/^\d+[.)-]?\s*/, '').trim())
+      .filter(Boolean)
+      .filter((line, index, arr) => arr.indexOf(line) === index);
+  }
+
+  const ingredientLines = extractIngredientLinesFromSectionHtml(ingredientsSection);
+
+  return {
+    id: generateId(fallbackTitle),
+    title: fallbackTitle,
+    thumbnail: fallbackThumbnail,
+    cookTime: 0,
+    prepTime: 0,
+    servings: 1,
+    difficulty: 'Medium',
+    cuisine: 'Global',
+    tags: ['Imported'],
+    nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+    ingredients: ingredientLines
+      .map((raw) => parseIngredientString(raw))
+      .filter(Boolean),
+    instructions,
+  };
 }
 
 function extractNutrition(json, field) {
@@ -310,10 +457,17 @@ export async function extractRecipeFromUrl(url) {
         idx === arr.findIndex(x => x.name.toLowerCase() === item.name.toLowerCase())
       );
 
+    const fallbackTitle = stripHtml(recipeNode.name) || 'Imported Recipe';
+    const fallbackThumbnail = extractThumbnail(recipeNode.image);
+    const htmlSectionRecipe = parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail);
+    const htmlIngredients = Array.isArray(htmlSectionRecipe.ingredients) ? htmlSectionRecipe.ingredients : [];
+    const htmlInstructions = Array.isArray(htmlSectionRecipe.instructions) ? htmlSectionRecipe.instructions : [];
+    const jsonInstructions = extractInstructions(recipeNode);
+
     return {
       id: generateId(recipeNode.name),
-      title: stripHtml(recipeNode.name) || 'Imported Recipe',
-      thumbnail: extractThumbnail(recipeNode.image),
+      title: fallbackTitle,
+      thumbnail: fallbackThumbnail,
       cookTime: parseDuration(recipeNode.cookTime),
       prepTime: parseDuration(recipeNode.prepTime),
       servings: extractServings(recipeNode.recipeYield),
@@ -328,8 +482,8 @@ export async function extractRecipeFromUrl(url) {
         carbs: extractNutrition(recipeNode, 'carbohydrateContent'),
         fat: extractNutrition(recipeNode, 'fatContent'),
       },
-      ingredients,
-      instructions: extractInstructions(recipeNode),
+      ingredients: htmlIngredients.length > ingredients.length ? htmlIngredients : ingredients,
+      instructions: htmlInstructions.length > jsonInstructions.length ? htmlInstructions : jsonInstructions,
     };
   }
 
@@ -343,6 +497,8 @@ export async function extractRecipeFromUrl(url) {
 
   const fallbackThumbnail = $('meta[property="og:image"]').attr('content') || '';
 
+  const htmlSectionRecipe = parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail);
+
   // Target class-named ingredient containers; avoid pulling in navigation/ads.
   const ingredientEls = $('[class*="ingredient"] li, [class*="wprm-recipe-ingredient"]');
   const fallbackIngredients = ingredientEls.length
@@ -355,7 +511,7 @@ export async function extractRecipeFromUrl(url) {
     ? instructionEls.map((_, el) => $(el).text().trim()).get().filter(Boolean)
     : $('ol li').map((_, el) => $(el).text().trim()).get().filter(t => t.length > 20);
 
-  return {
+  const selectorFallbackRecipe = {
     id: generateId(fallbackTitle),
     title: fallbackTitle,
     thumbnail: fallbackThumbnail,
@@ -371,4 +527,10 @@ export async function extractRecipeFromUrl(url) {
       .filter(Boolean),
     instructions: fallbackInstructions,
   };
+
+  if ((htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length) {
+    return htmlSectionRecipe;
+  }
+
+  return selectorFallbackRecipe;
 }
