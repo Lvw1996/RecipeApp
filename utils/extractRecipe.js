@@ -24,6 +24,7 @@ const MEASURE_UNITS = [
   'sprigs','sprig',
   'bunches','bunch',
   'cans','can',
+  'cubes','cube',
   'pinches','pinch',
   'pieces','piece','pcs',
 ];
@@ -41,12 +42,19 @@ const UNIT_ALIASES = {
   pounds: 'lb', pound: 'lb', lbs: 'lb',
   ounces: 'oz', ounce: 'oz',
   cloves: 'clove', slices: 'slice', sprigs: 'sprig',
-  bunches: 'bunch', cans: 'can', pinches: 'pinch',
+  bunches: 'bunch', cans: 'can', cubes: 'cube', cube: 'cube', pinches: 'pinch',
   pieces: 'pcs', piece: 'pcs',
 };
 
 const PREP_NOTE_REGEX =
   /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)/i;
+
+const PRICE_FRAGMENT_REGEX = /(?:^|\s)[£$€]\s?\d+(?:[.,]\d{1,2})?(?:\s|$)/g;
+
+function stripPriceAnnotations(value) {
+  const withoutPrice = String(value || '').replace(PRICE_FRAGMENT_REGEX, ' ');
+  return withoutPrice.replace(/\s+/g, ' ').trim();
+}
 
 const UNICODE_FRACTIONS = {
   '¼': 1 / 4,
@@ -161,6 +169,14 @@ function parseIngredientString(raw) {
   }
   let remainder = qtyMatch ? text.slice(qtyMatch[0].length).trim() : text;
 
+  // Handle pack-size notation after quantity, e.g. "2 x 410g cans ...".
+  let packSizeNote = '';
+  const packSizeMatch = remainder.match(/^x\s*([0-9]+(?:\.[0-9]+)?)\s*(g|kg|ml|l|oz|lb|lbs)\b\.?\s*/i);
+  if (packSizeMatch) {
+    packSizeNote = `${packSizeMatch[1]} ${cleanUnit(packSizeMatch[2])} each`;
+    remainder = remainder.slice(packSizeMatch[0].length).trim();
+  }
+
   // --- Parse unit ---
   const unitPattern = new RegExp(`^(${MEASURE_UNITS.join('|')})\\b\\.?\\s*`, 'i');
   const unitMatch = remainder.match(unitPattern);
@@ -229,11 +245,17 @@ function parseIngredientString(raw) {
 
   // Handle count units that appear after the ingredient name, e.g. "4 garlic cloves".
   if (!unit && qtyMatch) {
-    const trailingCountUnitMatch = remainder.match(/^(.*?)(?:\s+)(cloves?|slices?|sprigs?|pinches?|pieces?|pcs)\.?\s*$/i);
+    const trailingCountUnitMatch = remainder.match(/^(.*?)(?:\s+)(cloves?|slices?|sprigs?|pinches?|pieces?|pcs|cubes?)\b\.?\s*(.*)$/i);
     if (trailingCountUnitMatch) {
       remainder = trailingCountUnitMatch[1].trim();
       unit = cleanUnit(trailingCountUnitMatch[2]);
+      const trailingContext = String(trailingCountUnitMatch[3] || '').trim();
+      if (trailingContext && !prepNote) prepNote = trailingContext;
     }
+  }
+
+  if (packSizeNote) {
+    prepNote = prepNote ? `${prepNote}; ${packSizeNote}` : packSizeNote;
   }
 
   // --- Final name clean ---
@@ -249,11 +271,14 @@ function parseIngredientString(raw) {
   if (!name) return null;
   if (/^\d+(?:\.\d+)?$/.test(name)) return null;
 
+  const cleanedName = stripPriceAnnotations(name).replace(/[\s,;:]+$/g, '').trim();
+  const cleanedPrepNote = stripPriceAnnotations(prepNote);
+
   return {
-    name,
+    name: cleanedName || name,
     quantity,
     unit,
-    ...(prepNote ? { prepNote } : {}),
+    ...(cleanedPrepNote ? { prepNote: cleanedPrepNote } : {}),
   };
 }
 
