@@ -503,20 +503,41 @@ function generateId(title) {
 // ---------------------------------------------------------------------------
 export async function extractRecipeFromUrl(url, options = {}) {
   const { signal } = options;
+  const requestTimeoutMs = Number(options.timeoutMs) || Number(process.env.UPSTREAM_TIMEOUT_MS || 35000);
 
-  const { data: html } = await axios.get(url, {
+  const requestConfig = {
     signal,
-    timeout: 20000,
-    maxRedirects: 5,
-    maxContentLength: 5 * 1024 * 1024,
-    maxBodyLength: 5 * 1024 * 1024,
+    timeout: requestTimeoutMs,
+    maxRedirects: 8,
+    maxContentLength: 15 * 1024 * 1024,
+    maxBodyLength: 15 * 1024 * 1024,
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
       'Connection': 'keep-alive',
     },
-  });
+  };
+
+  let html = '';
+  try {
+    const response = await axios.get(url, requestConfig);
+    html = response.data;
+  } catch (error) {
+    // Retry once for transient upstream stalls or socket hiccups.
+    const retryable =
+      error?.code === 'ECONNABORTED' ||
+      error?.code === 'ETIMEDOUT' ||
+      error?.code === 'ECONNRESET' ||
+      /timeout|socket|network/i.test(String(error?.message || ''));
+
+    if (!retryable || signal?.aborted) {
+      throw error;
+    }
+
+    const response = await axios.get(url, requestConfig);
+    html = response.data;
+  }
 
   const $ = cheerio.load(html);
 

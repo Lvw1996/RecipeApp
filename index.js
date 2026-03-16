@@ -4,7 +4,7 @@ import { extractRecipeFromUrl } from './utils/extractRecipe.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const REQUEST_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 30000);
+const REQUEST_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 45000);
 
 app.use(bodyParser.json());
 
@@ -19,7 +19,10 @@ app.post('/import', async (req, res) => {
   }, REQUEST_TIMEOUT_MS);
 
   try {
-    const recipe = await extractRecipeFromUrl(url, { signal: controller.signal });
+    const recipe = await extractRecipeFromUrl(url, {
+      signal: controller.signal,
+      timeoutMs: Math.max(15000, REQUEST_TIMEOUT_MS - 3000),
+    });
 
     return res.json(recipe);
   } catch (error) {
