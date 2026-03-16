@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import https from 'node:https';
 
 // ---------------------------------------------------------------------------
 // Unit tables for ingredient parsing
@@ -173,17 +174,33 @@ function parseIngredientString(raw) {
       .trim();
   }
 
-  // Strip dangling open/close parens left after pre-clean
-  remainder = remainder.replace(/\(\s*$/, '').replace(/^\s*\)/, '').trim();
+  // Strip dangling open/leading-close parens left after pre-clean.
+  // Keep trailing ')' for now so parenthetical note extraction can still match.
+  remainder = remainder
+    .replace(/\(\s*$/, '')
+    .replace(/^\s*\)+/, '')
+    .trim();
 
   // --- Extract prep note from trailing parenthetical: "(finely minced)" or "(, skin on...)" ---
   let prepNote = '';
-  const parenMatch = remainder.match(/\s*\(\s*,?\s*([^)]+?)\s*\)\s*$/);
+  const parenMatch = remainder.match(/\s*\(+\s*,?\s*([^()]+?)\s*\)+\s*$/);
   if (parenMatch) {
     const inner = parenMatch[1].replace(/^,\s*/, '').trim();
     if (!/^(?:note\s*\d*|see\s+notes?|optional)/i.test(inner) && inner.length > 0) {
       prepNote = inner;
       remainder = remainder.slice(0, parenMatch.index).trim();
+    }
+  }
+
+  // Fallback for malformed trailing notes like "ingredient ((note text".
+  if (!prepNote) {
+    const danglingOpenNoteMatch = remainder.match(/^(.*?)\s+\(+\s*([^()]+?)\s*$/);
+    if (danglingOpenNoteMatch) {
+      const inner = danglingOpenNoteMatch[2].replace(/^,\s*/, '').trim();
+      if (!/^(?:note\s*\d*|see\s+notes?|optional)/i.test(inner) && inner.length > 0) {
+        prepNote = inner;
+        remainder = danglingOpenNoteMatch[1].trim();
+      }
     }
   }
 
@@ -206,6 +223,9 @@ function parseIngredientString(raw) {
       remainder = remainder.slice(0, trailingPrepMatch.index).trim();
     }
   }
+
+  // Final cleanup for any trailing unmatched close parens.
+  remainder = remainder.replace(/\)+\s*$/, '').trim();
 
   // Handle count units that appear after the ingredient name, e.g. "4 garlic cloves".
   if (!unit && qtyMatch) {
@@ -664,24 +684,47 @@ export async function extractRecipeFromUrl(url, options = {}) {
     },
   };
 
+  const isTlsChainError = (error) => {
+    const msg = String(error?.message || '').toLowerCase();
+    const code = String(error?.code || '').toLowerCase();
+    return (
+      code === 'unable_to_verify_leaf_signature' ||
+      code === 'self_signed_cert_in_chain' ||
+      msg.includes('unable to verify the first certificate') ||
+      msg.includes('unable to verify leaf signature') ||
+      msg.includes('self signed certificate in certificate chain')
+    );
+  };
+
   let html = '';
   try {
     const response = await axios.get(url, requestConfig);
     html = response.data;
   } catch (error) {
+    // Some sites have incomplete TLS chains that fail Node validation but still serve valid HTML.
+    // Retry once with relaxed TLS only for known certificate-chain failures.
+    if (isTlsChainError(error) && !signal?.aborted) {
+      const insecureConfig = {
+        ...requestConfig,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      };
+      const insecureResponse = await axios.get(url, insecureConfig);
+      html = insecureResponse.data;
+    } else {
     // Retry once for transient upstream stalls or socket hiccups.
-    const retryable =
-      error?.code === 'ECONNABORTED' ||
-      error?.code === 'ETIMEDOUT' ||
-      error?.code === 'ECONNRESET' ||
-      /timeout|socket|network/i.test(String(error?.message || ''));
+      const retryable =
+        error?.code === 'ECONNABORTED' ||
+        error?.code === 'ETIMEDOUT' ||
+        error?.code === 'ECONNRESET' ||
+        /timeout|socket|network/i.test(String(error?.message || ''));
 
-    if (!retryable || signal?.aborted) {
-      throw error;
+      if (!retryable || signal?.aborted) {
+        throw error;
+      }
+
+      const response = await axios.get(url, requestConfig);
+      html = response.data;
     }
-
-    const response = await axios.get(url, requestConfig);
-    html = response.data;
   }
 
   const $ = cheerio.load(html);
