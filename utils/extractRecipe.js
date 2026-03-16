@@ -80,7 +80,7 @@ function parseQuantityToken(token) {
 
   const mixedM = q.match(/^([0-9]+)\s+([0-9]+)\/([0-9]+)$/);
   const fracM = q.match(/^([0-9]+)\/([0-9]+)$/);
-  const unicodeMixedM = q.match(new RegExp(`^([0-9]+)\s*(${UNICODE_FRACTION_REGEX})$`));
+  const unicodeMixedM = q.match(new RegExp(`^([0-9]+)\\s*(${UNICODE_FRACTION_REGEX})$`));
   const unicodeOnlyM = q.match(new RegExp(`^(${UNICODE_FRACTION_REGEX})$`));
 
   if (mixedM) return parseInt(mixedM[1], 10) + parseInt(mixedM[2], 10) / parseInt(mixedM[3], 10);
@@ -150,7 +150,7 @@ function parseIngredientString(raw) {
     .trim();
 
   // --- Parse quantity: handles "1 1/2", "1/2", "2.5", integers ---
-  const qtyMatch = text.match(new RegExp(`^((?:[0-9]+\s+[0-9]+\/[0-9]+)|(?:[0-9]+\/[0-9]+)|(?:[0-9]*\.?[0-9]+)|(?:[0-9]+\s*${UNICODE_FRACTION_REGEX})|(?:${UNICODE_FRACTION_REGEX}))\s*`));
+  const qtyMatch = text.match(new RegExp(`^((?:[0-9]+\\s+[0-9]+\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\.?[0-9]+))\\s*`));
   let quantity = 1;
   if (qtyMatch) {
     quantity = parseQuantityToken(qtyMatch[1]);
@@ -498,12 +498,133 @@ function generateId(title) {
     .replace(/^_|_$/g, '');
 }
 
+function getWprmRecipeIdFromUrl(url) {
+  try {
+    const parsed = new URL(String(url || ''));
+    const hash = decodeURIComponent(parsed.hash || '');
+    const m = hash.match(/wprm-recipe-container-(\d+)/i);
+    return m ? String(m[1]) : '';
+  } catch {
+    return '';
+  }
+}
+
+async function extractRecipeFromWprmApi(url, options = {}) {
+  const recipeId = getWprmRecipeIdFromUrl(url);
+  if (!recipeId) return null;
+
+  let apiUrl = '';
+  try {
+    const parsed = new URL(String(url || ''));
+    apiUrl = `${parsed.origin}/wp-json/wp/v2/wprm_recipe/${recipeId}`;
+  } catch {
+    return null;
+  }
+
+  const timeoutMs = Number(options.timeoutMs) || 20000;
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const onAbort = () => timeoutController.abort();
+  if (options?.signal) options.signal.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json,text/plain,*/*',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      },
+      signal: timeoutController.signal,
+    });
+
+    if (!response.ok) return null;
+
+    const payload = await response.json();
+    const recipe = payload?.recipe || {};
+
+    const ingredientGroups = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
+    const ingredients = ingredientGroups
+      .flatMap((group) => Array.isArray(group?.ingredients) ? group.ingredients : [])
+      .map((item) => {
+        const amount = String(item?.amount || '').trim();
+        const unit = cleanUnit(String(item?.unit || ''));
+        const name = stripHtml(item?.name || '').trim();
+        const notes = stripHtml(item?.notes || '').trim();
+        const asLine = `${amount}${amount ? ' ' : ''}${unit}${unit ? ' ' : ''}${name}${notes ? `, ${notes}` : ''}`.trim();
+
+        const parsedIngredient = parseIngredientString(asLine);
+        if (parsedIngredient) return parsedIngredient;
+
+        if (!name) return null;
+        return {
+          name,
+          quantity: parseQuantityToken(amount || '1'),
+          unit,
+          ...(notes ? { prepNote: notes } : {}),
+        };
+      })
+      .filter(Boolean)
+      .filter((item, idx, arr) => idx === arr.findIndex((x) => x.name.toLowerCase() === item.name.toLowerCase()));
+
+    const instructionGroups = Array.isArray(recipe?.instructions) ? recipe.instructions : [];
+    const instructions = instructionGroups
+      .flatMap((group) => Array.isArray(group?.instructions) ? group.instructions : [])
+      .map((step) => stripHtml(step?.text || ''))
+      .filter(Boolean);
+
+    const keywords = Array.isArray(recipe?.tags?.keyword)
+      ? recipe.tags.keyword.map((k) => stripHtml(k?.name || '')).filter(Boolean)
+      : ['Imported'];
+
+    const cuisine = Array.isArray(recipe?.tags?.cuisine) && recipe.tags.cuisine[0]?.name
+      ? stripHtml(recipe.tags.cuisine[0].name)
+      : 'Global';
+
+    const title = stripHtml(recipe?.name || payload?.title?.rendered || '') || 'Imported Recipe';
+    if (!title) return null;
+
+    return {
+      id: String(recipe?.id || payload?.id || recipeId || generateId(title)),
+      title,
+      thumbnail: recipe?.image_url || '',
+      cookTime: Number(recipe?.cook_time) || 0,
+      prepTime: Number(recipe?.prep_time) || 0,
+      servings: extractServings(recipe?.servings),
+      difficulty: 'Medium',
+      cuisine,
+      tags: keywords.length ? keywords : ['Imported'],
+      nutrition: {
+        calories: Number(recipe?.nutrition?.calories) || 0,
+        protein: Number(recipe?.nutrition?.protein) || 0,
+        carbs: Number(recipe?.nutrition?.carbohydrates) || 0,
+        fat: Number(recipe?.nutrition?.fat) || 0,
+      },
+      ingredients,
+      instructions,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+    if (options?.signal) options.signal.removeEventListener('abort', onAbort);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 export async function extractRecipeFromUrl(url, options = {}) {
   const { signal } = options;
   const requestTimeoutMs = Number(options.timeoutMs) || Number(process.env.UPSTREAM_TIMEOUT_MS || 35000);
+
+  // For WPRM links with recipe id in hash, use the WP REST endpoint first.
+  const wprmApiRecipe = await extractRecipeFromWprmApi(url, {
+    signal,
+    timeoutMs: Math.min(requestTimeoutMs, 20000),
+  });
+  if (wprmApiRecipe) {
+    return wprmApiRecipe;
+  }
 
   const requestConfig = {
     signal,
