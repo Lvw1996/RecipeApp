@@ -47,6 +47,50 @@ const UNIT_ALIASES = {
 const PREP_NOTE_REGEX =
   /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|as needed|room temp|at room temperature)/i;
 
+const UNICODE_FRACTIONS = {
+  '¼': 1 / 4,
+  '½': 1 / 2,
+  '¾': 3 / 4,
+  '⅐': 1 / 7,
+  '⅑': 1 / 9,
+  '⅒': 1 / 10,
+  '⅓': 1 / 3,
+  '⅔': 2 / 3,
+  '⅕': 1 / 5,
+  '⅖': 2 / 5,
+  '⅗': 3 / 5,
+  '⅘': 4 / 5,
+  '⅙': 1 / 6,
+  '⅚': 5 / 6,
+  '⅛': 1 / 8,
+  '⅜': 3 / 8,
+  '⅝': 5 / 8,
+  '⅞': 7 / 8,
+};
+
+const UNICODE_FRACTION_REGEX = '[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]';
+
+function parseQuantityToken(token) {
+  const q = String(token || '').trim();
+  if (!q) return 1;
+
+  const mixedM = q.match(/^([0-9]+)\s+([0-9]+)\/([0-9]+)$/);
+  const fracM = q.match(/^([0-9]+)\/([0-9]+)$/);
+  const unicodeMixedM = q.match(new RegExp(`^([0-9]+)\s*(${UNICODE_FRACTION_REGEX})$`));
+  const unicodeOnlyM = q.match(new RegExp(`^(${UNICODE_FRACTION_REGEX})$`));
+
+  if (mixedM) return parseInt(mixedM[1], 10) + parseInt(mixedM[2], 10) / parseInt(mixedM[3], 10);
+  if (fracM) return parseInt(fracM[1], 10) / parseInt(fracM[2], 10);
+  if (unicodeMixedM) {
+    const whole = parseInt(unicodeMixedM[1], 10) || 0;
+    const fraction = UNICODE_FRACTIONS[unicodeMixedM[2]] || 0;
+    return whole + fraction || 1;
+  }
+  if (unicodeOnlyM) return UNICODE_FRACTIONS[unicodeOnlyM[1]] || 1;
+
+  return parseFloat(q) || 1;
+}
+
 function cleanUnit(raw) {
   const lower = String(raw || '').toLowerCase().trim();
   return UNIT_ALIASES[lower] || lower;
@@ -102,15 +146,10 @@ function parseIngredientString(raw) {
     .trim();
 
   // --- Parse quantity: handles "1 1/2", "1/2", "2.5", integers ---
-  const qtyMatch = text.match(/^((?:\d+\s+\d\/\d|\d+\/\d|\d*\.?\d+))\s*/);
+  const qtyMatch = text.match(new RegExp(`^((?:[0-9]+\s+[0-9]+\/[0-9]+)|(?:[0-9]+\/[0-9]+)|(?:[0-9]*\.?[0-9]+)|(?:[0-9]+\s*${UNICODE_FRACTION_REGEX})|(?:${UNICODE_FRACTION_REGEX}))\s*`));
   let quantity = 1;
   if (qtyMatch) {
-    const q = qtyMatch[1].trim();
-    const mixedM = q.match(/^(\d+)\s+(\d+)\/(\d+)$/);
-    const fracM = q.match(/^(\d+)\/(\d+)$/);
-    if (mixedM) quantity = parseInt(mixedM[1]) + parseInt(mixedM[2]) / parseInt(mixedM[3]);
-    else if (fracM) quantity = parseInt(fracM[1]) / parseInt(fracM[2]);
-    else quantity = parseFloat(q) || 1;
+    quantity = parseQuantityToken(qtyMatch[1]);
   }
   let remainder = qtyMatch ? text.slice(qtyMatch[0].length).trim() : text;
 
@@ -160,6 +199,7 @@ function parseIngredientString(raw) {
     .trim() || text.split(/[,(]/)[0].replace(/^of\s+/i, '').trim(); // safe fallback
 
   if (!name) return null;
+  if (/^\d+(?:\.\d+)?$/.test(name)) return null;
 
   return {
     name,
