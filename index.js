@@ -13,23 +13,28 @@ app.post('/import', async (req, res) => {
 
   if (!url) return res.status(400).json({ error: 'No URL provided' });
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
+
   try {
-    const recipe = await Promise.race([
-      extractRecipeFromUrl(url),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Importer timeout exceeded')), REQUEST_TIMEOUT_MS);
-      }),
-    ]);
+    const recipe = await extractRecipeFromUrl(url, { signal: controller.signal });
 
     return res.json(recipe);
   } catch (error) {
     console.error('❌ Error extracting recipe:', error.message);
 
-    if (/timeout/i.test(String(error?.message || ''))) {
+    const message = String(error?.message || '');
+    const code = String(error?.code || '');
+
+    if (/timeout|aborted|canceled/i.test(message) || code === 'ERR_CANCELED') {
       return res.status(504).json({ error: 'Importer timed out while fetching/parsing recipe' });
     }
 
     return res.status(500).json({ error: 'Failed to extract recipe' });
+  } finally {
+    clearTimeout(timeoutId);
   }
 });
 

@@ -71,7 +71,11 @@ const UNICODE_FRACTIONS = {
 const UNICODE_FRACTION_REGEX = '[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]';
 
 function parseQuantityToken(token) {
-  const q = String(token || '').trim();
+  const q = String(token || '')
+    .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
+    .replace(/⁄/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!q) return 1;
 
   const mixedM = q.match(/^([0-9]+)\s+([0-9]+)\/([0-9]+)$/);
@@ -497,8 +501,11 @@ function generateId(title) {
 // ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
-export async function extractRecipeFromUrl(url) {
+export async function extractRecipeFromUrl(url, options = {}) {
+  const { signal } = options;
+
   const { data: html } = await axios.get(url, {
+    signal,
     timeout: 20000,
     maxRedirects: 5,
     maxContentLength: 5 * 1024 * 1024,
