@@ -499,6 +499,10 @@ function generateId(title) {
 // ---------------------------------------------------------------------------
 export async function extractRecipeFromUrl(url) {
   const { data: html } = await axios.get(url, {
+    timeout: 20000,
+    maxRedirects: 5,
+    maxContentLength: 5 * 1024 * 1024,
+    maxBodyLength: 5 * 1024 * 1024,
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
