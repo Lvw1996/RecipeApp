@@ -120,6 +120,22 @@ function stripHtml(value) {
     .trim();
 }
 
+function stripHtmlToText(value) {
+  return String(value || '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 function decodeEntities(value) {
   return String(value || '')
     .replace(/&nbsp;/gi, ' ')
@@ -524,6 +540,30 @@ function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
   };
 }
 
+function extractRecipeNotes($) {
+  const noteSelectors = [
+    '.wprm-recipe-notes-container',
+    '.wprm-recipe-notes',
+    '.tasty-recipes-notes',
+    '.mv-create-notes',
+    '.mv-recipe-notes',
+    '[class*="recipe-notes"]',
+    '[class*="recipe_notes"]',
+    '[class*="recipe-tips"]',
+  ];
+
+  for (const selector of noteSelectors) {
+    const el = $(selector).first();
+    if (!el.length) continue;
+    const text = stripHtmlToText($.html(el) || el.text() || '');
+    if (text) return text;
+  }
+
+  const headingSection = getSectionHtmlByHeading($, 'Notes?|Recipe\\s*Notes?|Cook\'?s?\\s*Notes?|Tips?');
+  const headingText = stripHtmlToText(headingSection || '');
+  return headingText || '';
+}
+
 function extractNutrition(json, field) {
   return json.nutrition?.[field]
     ? parseInt(String(json.nutrition[field]).replace(/[^\d]/g, '')) || 0
@@ -687,6 +727,7 @@ async function extractRecipeFromWprmApi(url, options = {}) {
       : 'Global';
 
     const title = stripHtml(recipe?.name || payload?.title?.rendered || '') || 'Imported Recipe';
+    const recipeNotes = stripHtmlToText(recipe?.notes || payload?.content?.rendered || '');
     if (!title) return null;
 
     return {
@@ -707,6 +748,7 @@ async function extractRecipeFromWprmApi(url, options = {}) {
       },
       ingredients,
       instructions,
+      ...(recipeNotes ? { notes: recipeNotes } : {}),
     };
   } catch {
     return null;
@@ -790,6 +832,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
   }
 
   const $ = cheerio.load(html);
+  const htmlNotes = extractRecipeNotes($);
 
   // --- 1. Try JSON-LD structured data ---
   const jsonLdScripts = $('script[type="application/ld+json"]')
@@ -830,6 +873,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
     const htmlIngredients = Array.isArray(htmlSectionRecipe.ingredients) ? htmlSectionRecipe.ingredients : [];
     const htmlInstructions = Array.isArray(htmlSectionRecipe.instructions) ? htmlSectionRecipe.instructions : [];
     const jsonInstructions = extractInstructions(recipeNode);
+    const jsonNotes = stripHtmlToText(recipeNode.recipeNotes || recipeNode.notes || recipeNode.description || '');
 
     return {
       id: generateId(recipeNode.name),
@@ -851,6 +895,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
       },
       ingredients: htmlIngredients.length > ingredients.length ? htmlIngredients : ingredients,
       instructions: htmlInstructions.length > jsonInstructions.length ? htmlInstructions : jsonInstructions,
+      ...(htmlNotes || jsonNotes ? { notes: htmlNotes || jsonNotes } : {}),
     };
   }
 
@@ -893,6 +938,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
       .map(raw => parseIngredientString(raw))
       .filter(Boolean),
     instructions: fallbackInstructions,
+    ...(htmlNotes ? { notes: htmlNotes } : {}),
   };
 
   if ((htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length) {
