@@ -145,8 +145,8 @@ function parseIngredientString(raw) {
   let text = stripHtml(raw).replace(/^[\s•\-–—●▪▫◦▢■□►▶▸]+/, '').trim();
   if (!text) return null;
 
-  // Normalize range prefixes (e.g. "2 – 3 tbsp") to a single leading quantity.
-  text = text.replace(/^(\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?)\s*[–—-]\s*\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?\b\s*/i, '$1 ');
+  // Normalize range prefixes (e.g. "2 – 3 tbsp", "1 to 2 cloves") to a single leading quantity.
+  text = text.replace(/^(\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?)\s*(?:to|or|[–—-])\s*\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?\b\s*/i, '$1 ');
 
   // --- Pre-clean: strip editorial notes before parsing so they don't confuse qty/unit ---
   text = text
@@ -161,6 +161,20 @@ function parseIngredientString(raw) {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Normalize compact can-pack prefixes to total measurable quantity,
+  // e.g. "2 14 oz. cans of coconut milk" -> "28 oz coconut milk".
+  const compactCanPrefixMatch = text.match(/^(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*(g|kg|ml|l|oz|lb|lbs)\.?\s+cans?\b\.?\s*(?:of\s+)?/i);
+  if (compactCanPrefixMatch) {
+    const packCount = Number(compactCanPrefixMatch[1]);
+    const packSize = Number(compactCanPrefixMatch[2]);
+    if (Number.isFinite(packCount) && Number.isFinite(packSize) && packCount > 0 && packSize > 0) {
+      const totalQty = packCount * packSize;
+      const normalizedUnit = cleanUnit(compactCanPrefixMatch[3]);
+      const rest = text.slice(compactCanPrefixMatch[0].length).trim();
+      text = `${totalQty} ${normalizedUnit}${rest ? ` ${rest}` : ''}`.trim();
+    }
+  }
+
   // --- Parse quantity: handles "1 1/2", "1/2", "2.5", integers ---
   const qtyMatch = text.match(new RegExp(`^((?:[0-9]+\\s+[0-9]+\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\.?[0-9]+))\\s*`));
   let quantity = 1;
@@ -171,16 +185,28 @@ function parseIngredientString(raw) {
 
   // Handle pack-size notation after quantity, e.g. "2 x 410g cans ...".
   let packSizeNote = '';
+  let inferredUnitFromPack = '';
   const packSizeMatch = remainder.match(/^x\s*([0-9]+(?:\.[0-9]+)?)\s*(g|kg|ml|l|oz|lb|lbs)\b\.?\s*/i);
   if (packSizeMatch) {
     packSizeNote = `${packSizeMatch[1]} ${cleanUnit(packSizeMatch[2])} each`;
     remainder = remainder.slice(packSizeMatch[0].length).trim();
   }
 
+  // Handle compact can notation without "x", e.g. "2 14oz cans of coconut milk".
+  const compactPackMatch = remainder.match(/^([0-9]+(?:\.[0-9]+)?)\s*(g|kg|ml|l|oz|lb|lbs)\.?\s+cans?\b\.?\s*(?:of\s+)?/i);
+  if (compactPackMatch) {
+    const packAmount = Number(compactPackMatch[1]);
+    if (Number.isFinite(packAmount) && packAmount > 0) {
+      quantity *= packAmount;
+      inferredUnitFromPack = cleanUnit(compactPackMatch[2]);
+    }
+    remainder = remainder.slice(compactPackMatch[0].length).trim();
+  }
+
   // --- Parse unit ---
   const unitPattern = new RegExp(`^(${MEASURE_UNITS.join('|')})\\b\\.?\\s*`, 'i');
   const unitMatch = remainder.match(unitPattern);
-  let unit = unitMatch ? cleanUnit(unitMatch[1]) : '';
+  let unit = inferredUnitFromPack || (unitMatch ? cleanUnit(unitMatch[1]) : '');
   if (unitMatch) remainder = remainder.slice(unitMatch[0].length).trim();
 
   // Strip "/ N unit alternate" dual-unit notation (RecipeTin Eats style: "750g / 1 1/2 lb …")
@@ -240,6 +266,16 @@ function parseIngredientString(raw) {
     }
   }
 
+  // Extract preference/conditional suffixes without comma.
+  const trailingPreferenceMatch = remainder.match(/\b((?:of\s+)?more to your liking|if needed|as needed)\s*$/i);
+  if (trailingPreferenceMatch) {
+    const prefSuffix = trailingPreferenceMatch[1].replace(/^of\s+/i, '').trim();
+    if (prefSuffix) {
+      prepNote = prepNote ? `${prepNote}; ${prefSuffix}` : prefSuffix;
+      remainder = remainder.slice(0, trailingPreferenceMatch.index).trim();
+    }
+  }
+
   // Final cleanup for any trailing unmatched close parens.
   remainder = remainder.replace(/\)+\s*$/, '').trim();
 
@@ -260,6 +296,7 @@ function parseIngredientString(raw) {
 
   // --- Final name clean ---
   const name = remainder
+    .replace(/^to\s+\d+\s+/i, '')
     .replace(/\bcoriander\s*\/\s*cilantro\b/gi, 'cilantro')
     .replace(/\bcilantro\s*\/\s*coriander\b/gi, 'cilantro')
     .replace(/^of\s+/i, '')
