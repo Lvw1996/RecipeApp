@@ -45,7 +45,7 @@ const UNIT_ALIASES = {
 };
 
 const PREP_NOTE_REGEX =
-  /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|as needed|room temp|at room temperature)/i;
+  /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)/i;
 
 const UNICODE_FRACTIONS = {
   '¼': 1 / 4,
@@ -163,7 +163,7 @@ function parseIngredientString(raw) {
   // --- Parse unit ---
   const unitPattern = new RegExp(`^(${MEASURE_UNITS.join('|')})\\b\\.?\\s*`, 'i');
   const unitMatch = remainder.match(unitPattern);
-  const unit = unitMatch ? cleanUnit(unitMatch[1]) : '';
+  let unit = unitMatch ? cleanUnit(unitMatch[1]) : '';
   if (unitMatch) remainder = remainder.slice(unitMatch[0].length).trim();
 
   // Strip "/ N unit alternate" dual-unit notation (RecipeTin Eats style: "750g / 1 1/2 lb …")
@@ -197,11 +197,32 @@ function parseIngredientString(raw) {
     }
   }
 
+  // Extract trailing prep phrase without comma: "cilantro roughly chopped"
+  const trailingPrepMatch = remainder.match(/\b((?:finely|roughly|thinly|coarsely|freshly|lightly|gently)\s+(?:minced|chopped|diced|sliced|grated|crushed|julienned|shredded)|(?:minced|chopped|diced|sliced|grated|crushed|julienned|shredded))\s*$/i);
+  if (trailingPrepMatch) {
+    const prepSuffix = trailingPrepMatch[1].trim();
+    if (prepSuffix) {
+      if (!prepNote) prepNote = prepSuffix;
+      remainder = remainder.slice(0, trailingPrepMatch.index).trim();
+    }
+  }
+
+  // Handle count units that appear after the ingredient name, e.g. "4 garlic cloves".
+  if (!unit && qtyMatch) {
+    const trailingCountUnitMatch = remainder.match(/^(.*?)(?:\s+)(cloves?|slices?|sprigs?|pinches?|pieces?|pcs)\.?\s*$/i);
+    if (trailingCountUnitMatch) {
+      remainder = trailingCountUnitMatch[1].trim();
+      unit = cleanUnit(trailingCountUnitMatch[2]);
+    }
+  }
+
   // --- Final name clean ---
   const name = remainder
+    .replace(/\bcoriander\s*\/\s*cilantro\b/gi, 'cilantro')
+    .replace(/\bcilantro\s*\/\s*coriander\b/gi, 'cilantro')
     .replace(/^of\s+/i, '')
     .replace(/\s+-\s+.*$/, '')
-    .replace(/\b(?:to taste|for serving|as needed)\b.*$/i, '')
+    .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim() || text.split(/[,(]/)[0].replace(/^of\s+/i, '').trim(); // safe fallback
 
