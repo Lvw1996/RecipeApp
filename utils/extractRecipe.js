@@ -122,7 +122,7 @@ function decodeEntities(value) {
 }
 
 function asCleanLine(value) {
-  return stripHtml(decodeEntities(String(value || ''))).replace(/^[\s•\-–]+/, '').trim();
+  return stripHtml(decodeEntities(String(value || ''))).replace(/^[\s•\-–—●▪▫◦▢■□►▶▸]+/, '').trim();
 }
 
 /**
@@ -133,8 +133,11 @@ function asCleanLine(value) {
  *   → { name:"lamb mince", quantity:750, unit:"g" }
  */
 function parseIngredientString(raw) {
-  let text = stripHtml(raw).replace(/^[\s•\-–]+/, '').trim();
+  let text = stripHtml(raw).replace(/^[\s•\-–—●▪▫◦▢■□►▶▸]+/, '').trim();
   if (!text) return null;
+
+  // Normalize range prefixes (e.g. "2 – 3 tbsp") to a single leading quantity.
+  text = text.replace(/^(\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?)\s*[–—-]\s*\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?\b\s*/i, '$1 ');
 
   // --- Pre-clean: strip editorial notes before parsing so they don't confuse qty/unit ---
   text = text
