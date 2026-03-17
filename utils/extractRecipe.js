@@ -17,7 +17,7 @@ import {
   normalizeDifficultyLabel,
   estimateRecipeDifficulty,
   deriveRecipeDifficulty,
-} from '../../recipe-app-shared/recipeDifficulty.js';
+} from 'recipe-app-shared/recipeDifficulty.js';
 
 // ---------------------------------------------------------------------------
 // JSON-LD helpers

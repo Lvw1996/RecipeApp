@@ -15,4 +15,4 @@ export {
   decodeEntities,
   asCleanLine,
   parseIngredientString,
-} from '../../recipe-app-shared/ingredientParserShared.js';
+} from 'recipe-app-shared/ingredientParserShared.js';
