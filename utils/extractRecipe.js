@@ -13,6 +13,11 @@ import {
   asCleanLine,
   parseIngredientString,
 } from './ingredientParserShared.js';
+import {
+  normalizeDifficultyLabel,
+  estimateRecipeDifficulty,
+  deriveRecipeDifficulty,
+} from '../../recipe-app-shared/recipeDifficulty.js';
 
 // ---------------------------------------------------------------------------
 // JSON-LD helpers
@@ -205,78 +210,8 @@ function extractIngredientLinesFromSectionHtml(sectionHtml) {
   return ingredientLines;
 }
 
-function normalizeDifficultyLabel(value) {
-  const text = String(value || '').trim().toLowerCase();
-  if (!text) return '';
 
-  if (/\b(very\s+easy|super\s+easy)\b/.test(text)) return 'Easy';
-  if (/\b(very\s+hard|super\s+hard)\b/.test(text)) return 'Hard';
-  if (/\b(easy|simple|quick|beginner|starter|basic)\b/.test(text)) return 'Easy';
-  if (/\b(hard|difficult|advanced|challenging|expert|complex)\b/.test(text)) return 'Hard';
-  if (/\b(medium|moderate|intermediate)\b/.test(text)) return 'Medium';
-
-  return '';
-}
-
-function estimateDifficulty(recipe) {
-  const ingredientsCount = Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0;
-  const instructionsCount = Array.isArray(recipe?.instructions) ? recipe.instructions.length : 0;
-  const totalMinutes = (Number(recipe?.prepTime) || 0) + (Number(recipe?.cookTime) || 0);
-  const instructionText = (Array.isArray(recipe?.instructions) ? recipe.instructions : [])
-    .map((step) => String(step || ''))
-    .join(' ')
-    .toLowerCase();
-
-  const hardTechniqueHits = [
-    /\bproof\b/,
-    /\btemper\b/,
-    /\bemulsif(?:y|ied|ication)\b/,
-    /\bdeglaze\b/,
-    /\breduction\b/,
-    /\bcarameliz(?:e|ed|ation)\b/,
-    /\bfillet\b/,
-    /\bbutcher\b/,
-    /\bconfit\b/,
-  ].reduce((acc, pattern) => acc + (pattern.test(instructionText) ? 1 : 0), 0);
-
-  // Allow moderate ingredient counts for quick low-technique dishes.
-  if (totalMinutes > 0 && totalMinutes <= 35 && ingredientsCount <= 14 && instructionsCount <= 7 && hardTechniqueHits === 0) {
-    return 'Easy';
-  }
-
-  if ((totalMinutes >= 150 && instructionsCount >= 8) || hardTechniqueHits >= 3) {
-    return 'Hard';
-  }
-
-  let score = 0;
-  if (totalMinutes >= 120) score += 3;
-  else if (totalMinutes >= 75) score += 2;
-  else if (totalMinutes >= 45) score += 1;
-
-  if (ingredientsCount >= 16) score += 3;
-  else if (ingredientsCount >= 12) score += 2;
-  else if (ingredientsCount >= 9) score += 1;
-
-  if (instructionsCount >= 11) score += 3;
-  else if (instructionsCount >= 8) score += 2;
-  else if (instructionsCount >= 6) score += 1;
-
-  if (hardTechniqueHits >= 2) score += 3;
-  else if (hardTechniqueHits === 1) score += 1;
-
-  if (score >= 7) return 'Hard';
-  if (score >= 3) return 'Medium';
-  return 'Easy';
-}
-
-function deriveDifficulty(candidate, extras = []) {
-  const sources = [candidate?.difficulty, ...extras];
-  for (const source of sources) {
-    const normalized = normalizeDifficultyLabel(source);
-    if (normalized) return normalized;
-  }
-  return estimateDifficulty(candidate);
-}
+// Difficulty classification is now imported from shared module (see imports above)
 
 function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
   const methodSection = getSectionHtmlByHeading($, 'Method|Instructions?');
@@ -311,7 +246,7 @@ function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
 
   return {
     ...parsed,
-    difficulty: deriveDifficulty(parsed, [fallbackTitle]),
+    difficulty: deriveRecipeDifficulty(parsed, [fallbackTitle]),
   };
 }
 
@@ -528,7 +463,7 @@ async function extractRecipeFromWprmApi(url, options = {}) {
 
     return {
       ...parsed,
-      difficulty: deriveDifficulty(parsed, [
+      difficulty: deriveRecipeDifficulty(parsed, [
         recipe?.difficulty,
         recipe?.difficulty_text,
         recipe?.summary,
@@ -686,7 +621,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
 
     return {
       ...parsed,
-      difficulty: deriveDifficulty(parsed, [
+      difficulty: deriveRecipeDifficulty(parsed, [
         recipeNode?.difficulty,
         recipeNode?.recipeCategory,
         recipeNode?.description,
@@ -738,7 +673,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
     ...(htmlNotes ? { notes: htmlNotes } : {}),
   };
 
-  selectorFallbackRecipe.difficulty = deriveDifficulty(selectorFallbackRecipe, [fallbackTitle, htmlNotes]);
+  selectorFallbackRecipe.difficulty = deriveRecipeDifficulty(selectorFallbackRecipe, [fallbackTitle, htmlNotes]);
 
   if ((htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length) {
     return htmlSectionRecipe;
