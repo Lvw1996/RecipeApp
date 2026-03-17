@@ -109,6 +109,12 @@ function cleanUnit(raw) {
   return UNIT_ALIASES[lower] || lower;
 }
 
+function roundImportedQty(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 1;
+  return Math.round(n * 100) / 100;
+}
+
 function stripHtml(value) {
   return String(value || '')
     .replace(/<[^>]+>/g, ' ')
@@ -229,6 +235,9 @@ function parseIngredientString(raw) {
   if (unit) {
     remainder = remainder
       .replace(/^\/\s*[\d\s\/\.]+\s*(?:g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp)\b\s*/i, '')
+      .replace(/^or\s*[\d\s\/\.]+\s*(?:g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|grams?|kilograms?|kilos?|pounds?)\b\s*/i, '')
+      .replace(/^[\d\s\/\.]+\s*(?:g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|grams?|kilograms?|kilos?|pounds?)\b\s*/i, '')
+      .replace(/^of\s+/i, '')
       .trim();
   }
 
@@ -317,6 +326,9 @@ function parseIngredientString(raw) {
     .replace(/\bcilantro\s*\/\s*coriander\b/gi, 'cilantro')
     .replace(/^of\s+/i, '')
     .replace(/\s+-\s+.*$/, '')
+    .replace(/^salted\s+water$/i, 'water')
+    .replace(/\bfor\s+boiling\b.*$/i, '')
+    .replace(/^salted\s+water$/i, 'water')
     .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim() || text.split(/[,(]/)[0].replace(/^of\s+/i, '').trim(); // safe fallback
@@ -325,11 +337,15 @@ function parseIngredientString(raw) {
   if (/^\d+(?:\.\d+)?$/.test(name)) return null;
 
   const cleanedName = stripPriceAnnotations(name).replace(/[\s,;:]+$/g, '').trim();
+  const normalizedName = cleanedName
+    .replace(/\bfor\s+boiling\b.*$/i, '')
+    .replace(/^salted\s+water$/i, 'water')
+    .trim();
   const cleanedPrepNote = stripPriceAnnotations(prepNote);
 
   return {
-    name: cleanedName || name,
-    quantity,
+    name: normalizedName || cleanedName || name,
+    quantity: roundImportedQty(quantity),
     unit,
     ...(cleanedPrepNote ? { prepNote: cleanedPrepNote } : {}),
   };
@@ -704,7 +720,7 @@ async function extractRecipeFromWprmApi(url, options = {}) {
         if (!name) return null;
         return {
           name,
-          quantity: parseQuantityToken(amount || '1'),
+          quantity: roundImportedQty(parseQuantityToken(amount || '1')),
           unit,
           ...(notes ? { prepNote: notes } : {}),
         };
