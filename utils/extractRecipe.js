@@ -220,7 +220,8 @@ function estimateDifficulty(recipe) {
     /\bconfit\b/,
   ].reduce((acc, pattern) => acc + (pattern.test(instructionText) ? 1 : 0), 0);
 
-  if (totalMinutes > 0 && totalMinutes <= 35 && ingredientsCount <= 9 && instructionsCount <= 5 && hardTechniqueHits === 0) {
+  // Allow moderate ingredient counts for quick low-technique dishes.
+  if (totalMinutes > 0 && totalMinutes <= 35 && ingredientsCount <= 14 && instructionsCount <= 7 && hardTechniqueHits === 0) {
     return 'Easy';
   }
 
