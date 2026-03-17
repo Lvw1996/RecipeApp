@@ -179,10 +179,22 @@ export function parseIngredientString(raw) {
     .trim();
   if (!text) return null;
 
-  text = text.replace(
-    /^(\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?)\s*(?:to|or|[–—-])\s*\d+(?:\.\d+)?(?:\s+[0-9]+\/[0-9]+)?\b\s*/i,
-    '$1 '
-  );
+  let quantityMin = null;
+  let quantityMax = null;
+  let quantityDisplay = '';
+
+  const rangeMatch = text.match(new RegExp(
+    `^((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\\.?[0-9]+))\\s*(?:to|or|[–—-])\\s*((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\\.?[0-9]+))\\b\\s*`,
+    'i'
+  ));
+  if (rangeMatch) {
+    const lowerToken = rangeMatch[1].trim();
+    const upperToken = rangeMatch[2].trim();
+    quantityMin = roundImportedQty(parseQuantityToken(lowerToken));
+    quantityMax = roundImportedQty(parseQuantityToken(upperToken));
+    quantityDisplay = `${lowerToken} to ${upperToken}`;
+    text = text.replace(rangeMatch[0], `${upperToken} `);
+  }
 
   text = text
     .replace(/\(\(note[^)]*\)\)/gi, '')
@@ -218,6 +230,8 @@ export function parseIngredientString(raw) {
 
   let packSizeNote = '';
   let inferredUnitFromPack = '';
+  let altQuantity = null;
+  let altUnit = '';
   const packSizeMatch = remainder.match(/^x\s*([0-9]+(?:\.[0-9]+)?)\s*(g|kg|ml|l|oz|lb|lbs)\b\.?\s*/i);
   if (packSizeMatch) {
     packSizeNote = `${packSizeMatch[1]} ${cleanUnit(packSizeMatch[2])} each`;
@@ -242,6 +256,15 @@ export function parseIngredientString(raw) {
   if (unitMatch) remainder = remainder.slice(unitMatch[0].length).trim();
 
   if (unit) {
+    const altMatch = remainder.match(new RegExp(
+      `^\\/\\s*((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\\.?[0-9]+))\\s*(g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|grams?|kilograms?|kilos?|pounds?)\\b`,
+      'i'
+    ));
+    if (altMatch) {
+      altQuantity = roundImportedQty(parseQuantityToken(altMatch[1]));
+      altUnit = cleanUnit(altMatch[2]);
+    }
+
     remainder = remainder
       .replace(/^\/\s*[\d\s/\\.]+\s*(?:g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp)\b\s*/i, '')
       .replace(/^or\s*[\d\s/\\.]+\s*(?:g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|grams?|kilograms?|kilos?|pounds?)\b\s*/i, '')
@@ -333,10 +356,17 @@ export function parseIngredientString(raw) {
     .replace(/[\s,;:]+$/g, '')
     .trim();
 
+  const selectedQuantity = quantityMax != null ? quantityMax : roundImportedQty(quantity);
+
   return {
     name: name || rawName,
-    quantity: roundImportedQty(quantity),
+    quantity: selectedQuantity,
     unit,
+    ...(quantityMin != null ? { quantityMin } : {}),
+    ...(quantityMax != null ? { quantityMax } : {}),
+    ...(quantityDisplay ? { quantityDisplay } : {}),
+    ...(altQuantity != null ? { altQuantity } : {}),
+    ...(altUnit ? { altUnit } : {}),
     ...(prepNote ? { prepNote: stripPriceAnnotations(prepNote) } : {}),
   };
 }
