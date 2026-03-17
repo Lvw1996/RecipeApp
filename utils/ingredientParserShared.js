@@ -211,7 +211,7 @@ export function parseIngredientString(raw) {
     .replace(/\(,?\s*optional[^)]*\)/gi, '')
     .replace(/\(first\s+choice[^)]*\)/gi, '')
     .replace(/\(second\s+choice[^)]*\)/gi, '')
-    .replace(/,\s*or\s+[^,(]+/gi, '')
+    .replace(/\(\s*,?\s*or\s+[^)]+\)/gi, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s+/g, ' ')
     .trim();
