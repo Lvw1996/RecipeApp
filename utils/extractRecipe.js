@@ -155,6 +155,25 @@ function isLikelyIngredientLine(line) {
   return false;
 }
 
+const SALT_AND_PEPPER_PATTERN = /\bsalt\b\s*(?:and|&)\s*(?:freshly\s+ground\s+|ground\s+|cracked\s+|black\s+)?\bpepper\b|\b(?:freshly\s+ground\s+|ground\s+|cracked\s+|black\s+)?\bpepper\b\s*(?:and|&)\s*\bsalt\b/i;
+
+function expandSeasoningLine(value) {
+  const line = asCleanLine(value);
+  if (!line) return [];
+  if (!SALT_AND_PEPPER_PATTERN.test(line)) return [line];
+
+  return [
+    line.replace(SALT_AND_PEPPER_PATTERN, 'salt').trim(),
+    line.replace(SALT_AND_PEPPER_PATTERN, 'black pepper').trim(),
+  ].filter(Boolean);
+}
+
+function parseIngredientEntries(raw) {
+  return expandSeasoningLine(raw)
+    .map((line) => parseIngredientString(line))
+    .filter(Boolean);
+}
+
 function extractIngredientLinesFromSectionHtml(sectionHtml) {
   if (!sectionHtml) return [];
 
@@ -285,7 +304,7 @@ function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
     tags: ['Imported'],
     nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
     ingredients: ingredientLines
-      .map((raw) => parseIngredientString(raw))
+      .flatMap((raw) => parseIngredientEntries(raw))
       .filter(Boolean),
     instructions,
   };
@@ -454,17 +473,18 @@ async function extractRecipeFromWprmApi(url, options = {}) {
         const notes = stripHtml(item?.notes || '').trim();
         const asLine = `${amount}${amount ? ' ' : ''}${unit}${unit ? ' ' : ''}${name}${notes ? `, ${notes}` : ''}`.trim();
 
-        const parsedIngredient = parseIngredientString(asLine);
-        if (parsedIngredient) return parsedIngredient;
+        const parsedIngredients = parseIngredientEntries(asLine);
+        if (parsedIngredients.length > 0) return parsedIngredients;
 
         if (!name) return null;
-        return {
+        return [{
           name,
           quantity: roundImportedQty(parseQuantityToken(amount || '1')),
           unit,
           ...(notes ? { prepNote: notes } : {}),
-        };
+        }];
       })
+      .flat()
       .filter(Boolean)
       .filter((item, idx, arr) => idx === arr.findIndex((x) => x.name.toLowerCase() === item.name.toLowerCase()));
 
@@ -625,7 +645,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
       : [];
 
     const ingredients = rawIngredients
-      .map(item => parseIngredientString(String(item)))
+      .flatMap(item => parseIngredientEntries(String(item)))
       .filter(Boolean)
       .filter((item, idx, arr) =>
         idx === arr.findIndex(x => x.name.toLowerCase() === item.name.toLowerCase())
@@ -712,7 +732,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
     tags: ['Imported'],
     nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
     ingredients: fallbackIngredients
-      .map(raw => parseIngredientString(raw))
+      .flatMap(raw => parseIngredientEntries(raw))
       .filter(Boolean),
     instructions: fallbackInstructions,
     ...(htmlNotes ? { notes: htmlNotes } : {}),
