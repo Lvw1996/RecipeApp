@@ -1,13 +1,13 @@
 // Shared recipe difficulty classification logic used by both recipe-app and recipe-app-importer
 
 const HARD_TECHNIQUE_PATTERNS = [
-  /\bproof\b/,
+  /(?<!-)\bproof\b/,           // dough proofing; exclude 'oven-proof', 'waterproof'
   /\btemper\b/,
   /\bemulsif(?:y|ied|ication)\b/,
   /\bdeglaze\b/,
   /\breduction\b/,
   /\bcarameliz(?:e|ed|ation)\b/,
-  /\bfillet\b/,
+  /\bfillet(?:ing|ed)\b/,     // filleting technique; exclude 'the fillet' (noun)
   /\bbutcher\b/,
   /\bconfit\b/,
 ];

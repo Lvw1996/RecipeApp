@@ -615,7 +615,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
         fat: extractNutrition(recipeNode, 'fatContent'),
       },
       ingredients: htmlIngredients.length > ingredients.length ? htmlIngredients : ingredients,
-      instructions: htmlInstructions.length > jsonInstructions.length ? htmlInstructions : jsonInstructions,
+      instructions: jsonInstructions.length > 0 ? jsonInstructions : htmlInstructions,
       ...(htmlNotes || jsonNotes ? { notes: htmlNotes || jsonNotes } : {}),
     };
 
@@ -624,9 +624,6 @@ export async function extractRecipeFromUrl(url, options = {}) {
       difficulty: deriveRecipeDifficulty(parsed, [
         recipeNode?.difficulty,
         recipeNode?.recipeCategory,
-        recipeNode?.description,
-        recipeNode?.keywords,
-        fallbackTitle,
       ]),
     };
   }
