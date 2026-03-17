@@ -186,6 +186,78 @@ function extractIngredientLinesFromSectionHtml(sectionHtml) {
   return ingredientLines;
 }
 
+function normalizeDifficultyLabel(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+
+  if (/\b(very\s+easy|super\s+easy)\b/.test(text)) return 'Easy';
+  if (/\b(very\s+hard|super\s+hard)\b/.test(text)) return 'Hard';
+  if (/\b(easy|simple|quick|beginner|starter|basic)\b/.test(text)) return 'Easy';
+  if (/\b(hard|difficult|advanced|challenging|expert|complex)\b/.test(text)) return 'Hard';
+  if (/\b(medium|moderate|intermediate)\b/.test(text)) return 'Medium';
+
+  return '';
+}
+
+function estimateDifficulty(recipe) {
+  const ingredientsCount = Array.isArray(recipe?.ingredients) ? recipe.ingredients.length : 0;
+  const instructionsCount = Array.isArray(recipe?.instructions) ? recipe.instructions.length : 0;
+  const totalMinutes = (Number(recipe?.prepTime) || 0) + (Number(recipe?.cookTime) || 0);
+  const instructionText = (Array.isArray(recipe?.instructions) ? recipe.instructions : [])
+    .map((step) => String(step || ''))
+    .join(' ')
+    .toLowerCase();
+
+  const hardTechniqueHits = [
+    /\bproof\b/,
+    /\btemper\b/,
+    /\bemulsif(?:y|ied|ication)\b/,
+    /\bdeglaze\b/,
+    /\breduction\b/,
+    /\bcarameliz(?:e|ed|ation)\b/,
+    /\bfillet\b/,
+    /\bbutcher\b/,
+    /\bconfit\b/,
+  ].reduce((acc, pattern) => acc + (pattern.test(instructionText) ? 1 : 0), 0);
+
+  if (totalMinutes > 0 && totalMinutes <= 35 && ingredientsCount <= 9 && instructionsCount <= 5 && hardTechniqueHits === 0) {
+    return 'Easy';
+  }
+
+  if ((totalMinutes >= 150 && instructionsCount >= 8) || hardTechniqueHits >= 3) {
+    return 'Hard';
+  }
+
+  let score = 0;
+  if (totalMinutes >= 120) score += 3;
+  else if (totalMinutes >= 75) score += 2;
+  else if (totalMinutes >= 45) score += 1;
+
+  if (ingredientsCount >= 16) score += 3;
+  else if (ingredientsCount >= 12) score += 2;
+  else if (ingredientsCount >= 9) score += 1;
+
+  if (instructionsCount >= 11) score += 3;
+  else if (instructionsCount >= 8) score += 2;
+  else if (instructionsCount >= 6) score += 1;
+
+  if (hardTechniqueHits >= 2) score += 3;
+  else if (hardTechniqueHits === 1) score += 1;
+
+  if (score >= 7) return 'Hard';
+  if (score >= 3) return 'Medium';
+  return 'Easy';
+}
+
+function deriveDifficulty(candidate, extras = []) {
+  const sources = [candidate?.difficulty, ...extras];
+  for (const source of sources) {
+    const normalized = normalizeDifficultyLabel(source);
+    if (normalized) return normalized;
+  }
+  return estimateDifficulty(candidate);
+}
+
 function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
   const methodSection = getSectionHtmlByHeading($, 'Method|Instructions?');
   const ingredientsSection = getSectionHtmlByHeading($, 'Ingredients?');
@@ -201,14 +273,13 @@ function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
 
   const ingredientLines = extractIngredientLinesFromSectionHtml(ingredientsSection);
 
-  return {
+  const parsed = {
     id: generateId(fallbackTitle),
     title: fallbackTitle,
     thumbnail: fallbackThumbnail,
     cookTime: 0,
     prepTime: 0,
     servings: 1,
-    difficulty: 'Medium',
     cuisine: 'Global',
     tags: ['Imported'],
     nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
@@ -216,6 +287,11 @@ function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
       .map((raw) => parseIngredientString(raw))
       .filter(Boolean),
     instructions,
+  };
+
+  return {
+    ...parsed,
+    difficulty: deriveDifficulty(parsed, [fallbackTitle]),
   };
 }
 
@@ -409,14 +485,13 @@ async function extractRecipeFromWprmApi(url, options = {}) {
     const recipeNotes = stripHtmlToText(recipe?.notes || payload?.content?.rendered || '');
     if (!title) return null;
 
-    return {
+    const parsed = {
       id: String(recipe?.id || payload?.id || recipeId || generateId(title)),
       title,
       thumbnail: recipe?.image_url || '',
       cookTime: Number(recipe?.cook_time) || 0,
       prepTime: Number(recipe?.prep_time) || 0,
       servings: extractServings(recipe?.servings),
-      difficulty: 'Medium',
       cuisine,
       tags: keywords.length ? keywords : ['Imported'],
       nutrition: {
@@ -428,6 +503,18 @@ async function extractRecipeFromWprmApi(url, options = {}) {
       ingredients,
       instructions,
       ...(recipeNotes ? { notes: recipeNotes } : {}),
+    };
+
+    return {
+      ...parsed,
+      difficulty: deriveDifficulty(parsed, [
+        recipe?.difficulty,
+        recipe?.difficulty_text,
+        recipe?.summary,
+        recipeNotes,
+        title,
+        keywords.join(' '),
+      ]),
     };
   } catch {
     return null;
@@ -554,14 +641,13 @@ export async function extractRecipeFromUrl(url, options = {}) {
     const jsonInstructions = extractInstructions(recipeNode);
     const jsonNotes = stripHtmlToText(recipeNode.recipeNotes || recipeNode.notes || recipeNode.description || '');
 
-    return {
+    const parsed = {
       id: generateId(recipeNode.name),
       title: fallbackTitle,
       thumbnail: fallbackThumbnail,
       cookTime: parseDuration(recipeNode.cookTime),
       prepTime: parseDuration(recipeNode.prepTime),
       servings: extractServings(recipeNode.recipeYield),
-      difficulty: 'Medium',
       cuisine: stripHtml(recipeNode.recipeCuisine) || 'Global',
       tags: typeof recipeNode.keywords === 'string'
         ? recipeNode.keywords.split(',').map(t => t.trim()).filter(Boolean)
@@ -575,6 +661,17 @@ export async function extractRecipeFromUrl(url, options = {}) {
       ingredients: htmlIngredients.length > ingredients.length ? htmlIngredients : ingredients,
       instructions: htmlInstructions.length > jsonInstructions.length ? htmlInstructions : jsonInstructions,
       ...(htmlNotes || jsonNotes ? { notes: htmlNotes || jsonNotes } : {}),
+    };
+
+    return {
+      ...parsed,
+      difficulty: deriveDifficulty(parsed, [
+        recipeNode?.difficulty,
+        recipeNode?.recipeCategory,
+        recipeNode?.description,
+        recipeNode?.keywords,
+        fallbackTitle,
+      ]),
     };
   }
 
@@ -609,7 +706,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
     cookTime: 0,
     prepTime: 0,
     servings: 1,
-    difficulty: 'Medium',
+    difficulty: 'Easy',
     cuisine: 'Global',
     tags: ['Imported'],
     nutrition: { calories: 0, protein: 0, carbs: 0, fat: 0 },
@@ -619,6 +716,8 @@ export async function extractRecipeFromUrl(url, options = {}) {
     instructions: fallbackInstructions,
     ...(htmlNotes ? { notes: htmlNotes } : {}),
   };
+
+  selectorFallbackRecipe.difficulty = deriveDifficulty(selectorFallbackRecipe, [fallbackTitle, htmlNotes]);
 
   if ((htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length) {
     return htmlSectionRecipe;
