@@ -358,7 +358,7 @@ export function parseIngredientString(raw) {
 
   if (!unit && qtyMatch) {
     const trailingCountMatch = remainder.match(
-      /^(.*?)(?:\s+)(cloves?|slices?|sprigs?|pinches?|pieces?|pcs|cubes?)\b\.?\s*(.*)$/i
+      /^(.*?)(?:\s+)(cloves?|slices?|sprigs?|pinches?|pieces?|pcs|cubes?|sheets?)\b\.?\s*(.*)$/i
     );
     if (trailingCountMatch) {
       remainder = trailingCountMatch[1].trim();
