@@ -26,6 +26,7 @@ export const MEASURE_UNITS = [
   'cans', 'can',
   'cubes', 'cube',
   'pinches', 'pinch',
+  'sheets', 'sheet',
   'pieces', 'piece', 'pcs',
 ];
 
@@ -48,6 +49,7 @@ export const UNIT_ALIASES = {
   ounces: 'oz', ounce: 'oz',
   cloves: 'clove', sticks: 'stick', stick: 'stick', slices: 'slice', sprigs: 'sprig',
   bunches: 'bunch', cans: 'can', cubes: 'cube', cube: 'cube', pinches: 'pinch',
+  sheets: 'sheet',
   pieces: 'pcs', piece: 'pcs',
 };
 
