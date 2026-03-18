@@ -3,7 +3,7 @@
 export const MEASURE_UNITS = [
   'tablespoons', 'tablespoon', 'tbsp',
   'teaspoons', 'teaspoon', 'tsp',
-  'cups', 'cup',
+  'cups', 'cup', 'c',
   'fluid ounces', 'fluid ounce', 'fl oz',
   'pints', 'pint',
   'quarts', 'quart',
@@ -32,6 +32,7 @@ export const UNIT_ALIASES = {
   tablespoons: 'tbsp', tablespoon: 'tbsp',
   teaspoons: 'tsp', teaspoon: 'tsp',
   cups: 'cup',
+  c: 'cup',
   'fluid ounces': 'fl oz', 'fluid ounce': 'fl oz',
   pints: 'pint', quarts: 'quart', gallons: 'gallon',
   milliliters: 'ml', millilitres: 'ml', milliliter: 'ml', millilitre: 'ml',
