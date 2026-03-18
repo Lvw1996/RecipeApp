@@ -117,6 +117,7 @@ export function parseQuantityToken(token) {
   const q = String(token || '')
     .replace(/[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g, ' ')
     .replace(/⁄/g, '/')
+    .replace(/(\d),(\d)/g, '$1.$2')
     .replace(/\s+/g, ' ')
     .trim();
   if (!q) return 1;
@@ -184,6 +185,7 @@ export function asCleanLine(value) {
 export function parseIngredientString(raw) {
   let text = stripHtml(raw)
     .replace(/^[\s\u2022\-\u2013\u2014\u25CF\u25AA\u25AB\u25E6\u25A2\u25A0\u25A1\u25BA\u25B6\u25B8]+/, '')
+    .replace(/(\d),(\d)/g, '$1.$2')
     .trim();
   if (!text) return null;
 
@@ -212,6 +214,7 @@ export function parseIngredientString(raw) {
     .replace(/\(first\s+choice[^)]*\)/gi, '')
     .replace(/\(second\s+choice[^)]*\)/gi, '')
     .replace(/\(\s*,?\s*or\s+[^)]+\)/gi, '')
+    .replace(/\([0-9.]+\s*(?:kg|g|lbs?|oz|ml|l|cups?|tbsp|tsp)\)/gi, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -348,6 +351,9 @@ export function parseIngredientString(raw) {
     .replace(/^to\s+\d+\s+/i, '')
     .replace(/\bcoriander\s*\/\s*cilantro\b/gi, 'cilantro')
     .replace(/\bcilantro\s*\/\s*coriander\b/gi, 'cilantro')
+    .replace(/\bsour[-\s]?cream\s+greek\s+yogurt\b/gi, 'sour cream or greek yogurt')
+    .replace(/\bgreek\s+yogurt\s+sour[-\s]?cream\b/gi, 'greek yogurt or sour cream')
+    .replace(/\bfresh\s+herbs?\s+of\s+choice\b/gi, 'fresh herbs of choice')
     .replace(/^of\s+/i, '')
     .replace(/\s+-\s+.*$/, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
