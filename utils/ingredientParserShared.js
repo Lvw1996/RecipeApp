@@ -411,6 +411,8 @@ export function parseIngredientString(raw) {
 
   const rawName = remainder
     .replace(/^to\s+\d+\s+/i, '')
+    .replace(/^[).,:;\-\/\\]+\s*/, '')
+    .replace(/^(?:and|or)\s+/i, '')
     .replace(/\bcoriander\s*\/\s*cilantro\b/gi, 'cilantro')
     .replace(/\bcilantro\s*\/\s*coriander\b/gi, 'cilantro')
     .replace(/\beschalots?\s*\/\s*french\s+onions?(?:\s*\(\s*us\s*:\s*onions?\s*\))?/gi, 'onion')
@@ -425,6 +427,7 @@ export function parseIngredientString(raw) {
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\bfor\s+(?:frying|sauteing|sautéing)\b.*$/i, '')
     .replace(/\(\s*(?:and|or)\s*$/i, '')
+    .replace(/\([^)]*$/i, '')
     .replace(/\s+(?:and|or)\s*$/i, '')
     .replace(/\bbell\s+pepper\s+bell\s+pepper\b/gi, 'bell pepper')
     .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
