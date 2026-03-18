@@ -413,13 +413,16 @@ export function parseIngredientString(raw) {
     .replace(/^to\s+\d+\s+/i, '')
     .replace(/\bcoriander\s*\/\s*cilantro\b/gi, 'cilantro')
     .replace(/\bcilantro\s*\/\s*coriander\b/gi, 'cilantro')
+    .replace(/\beschalots?\s*\/\s*french\s+onions?(?:\s*\(\s*us\s*:\s*onions?\s*\))?/gi, 'onion')
     .replace(/\bsour[-\s]?cream\s+greek\s+yogurt\b/gi, 'sour cream or greek yogurt')
     .replace(/\bgreek\s+yogurt\s+sour[-\s]?cream\b/gi, 'greek yogurt or sour cream')
     .replace(/\bfresh\s+herbs?\s+of\s+choice\b/gi, 'fresh herbs of choice')
+    .replace(/\(\s*us\s*:\s*[^)]+\)/gi, '')
     .replace(/^of\s+/i, '')
     .replace(/\s+-\s+.*$/, '')
     .replace(/\s*\+\s*[\d\s\u00BC-\u00BE\u2150-\u215E\/]+\s*(?:cups?|tbsp?|tbs|tsp|ml|g|oz|lbs?)\s+for\b[^,]*/gi, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
+    .replace(/\bfor\s+(?:frying|sauteing|sautéing)\b.*$/i, '')
     .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
     .replace(/\s+/g, ' ')
     .trim() || text.split(/[,(]/)[0].replace(/^of\s+/i, '').trim();
@@ -429,9 +432,13 @@ export function parseIngredientString(raw) {
 
   const name = stripPriceAnnotations(rawName)
     .replace(/\bfor\s+boiling\b.*$/i, '')
+    .replace(/\bfor\s+(?:frying|sauteing|sautéing)\b.*$/i, '')
     .replace(/^salted\s+water$/i, 'water')
     .replace(/[\s,;:]+$/g, '')
     .trim();
+
+  // Filter out punctuation-only fragments to avoid empty match keys downstream.
+  if (!/[a-z]/i.test(name)) return null;
 
   const selectedQuantity = quantityMax != null ? quantityMax : roundImportedQty(quantity);
 
