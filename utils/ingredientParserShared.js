@@ -99,6 +99,38 @@ export const UNICODE_FRACTIONS = {
 
 export const UNICODE_FRACTION_REGEX = '[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞]';
 
+const escapeRegExp = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const MEASURE_UNITS_PATTERN = MEASURE_UNITS
+  .slice()
+  .sort((a, b) => b.length - a.length)
+  .map((unit) => escapeRegExp(unit))
+  .join('|');
+const LEADING_QTY_UNIT_REGEX = new RegExp(
+  `^((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\/[0-9]+)|(?:[0-9]*\\.?[0-9]+))\\s*(?:x\\s*)?(?:${MEASURE_UNITS_PATTERN})\\b\\.?\\s*`,
+  'i'
+);
+
+function stripLeadingMeasurementFragments(value) {
+  let next = String(value || '').trim();
+
+  for (let i = 0; i < 4; i += 1) {
+    const previous = next;
+    next = next
+      .replace(/^[)\]\[]+\s*/, '')
+      .replace(/^\/\s*/, '')
+      .replace(/^\(\s*(?:\d+(?:\.\d+)?)\s*[-\s]?(?:oz|ounce|ounces|g|kg|ml|l|lb|lbs|pounds?)\s*\)?\s*/i, '')
+      .replace(/^(?:\d+(?:\.\d+)?)\s*[-\s]?(?:oz|ounce|ounces|g|kg|ml|l|lb|lbs|pounds?)\)\s*/i, '')
+      .replace(/^(?:oz|ounce|ounces|g|kg|ml|l|lb|lbs|pounds?)\)\s*/i, '')
+      .replace(/^to\s+\d+\s+/i, '')
+      .replace(LEADING_QTY_UNIT_REGEX, '')
+      .trim();
+
+    if (next === previous) break;
+  }
+
+  return next;
+}
+
 export function stripPriceAnnotations(value) {
   return String(value || '').replace(PRICE_FRAGMENT_REGEX, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -218,6 +250,7 @@ export function parseIngredientString(raw) {
     .replace(/\(first\s+choice[^)]*\)/gi, '')
     .replace(/\(second\s+choice[^)]*\)/gi, '')
     .replace(/\(\s*,?\s*or\s+[^)]+\)/gi, '')
+    .replace(/\(\s*[0-9]+(?:\.[0-9]+)?\s*[-\s]?(?:oz|ounce|ounces|g|kg|ml|l|lb|lbs|pounds?)\s*\)/gi, '')
     .replace(/\([0-9.]+\s*(?:kg|g|lbs?|oz|ml|l|cups?|tbsp|tsp)\)/gi, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s+/g, ' ')
@@ -308,6 +341,10 @@ export function parseIngredientString(raw) {
       .replace(/^of\s+/i, '')
       .trim();
   }
+
+  // Some imports include a second amount chunk after separators,
+  // e.g. "1 cup /240 milliliters hot coffee".
+  remainder = stripLeadingMeasurementFragments(remainder);
 
   remainder = remainder.replace(/\(\s*$/, '').replace(/^\s*\)+/, '').trim();
 
