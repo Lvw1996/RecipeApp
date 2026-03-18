@@ -357,7 +357,7 @@ export function parseIngredientString(raw) {
     .replace(/\bfresh\s+herbs?\s+of\s+choice\b/gi, 'fresh herbs of choice')
     .replace(/^of\s+/i, '')
     .replace(/\s+-\s+.*$/, '')
-    .replace(/\s*\+\s*[\d\s\u00BC-\u00BE\u2150-\u215E\/]+\s*(?:cups?|tbsp?|tbs|tsp|ml|g|oz|lbs?)\s+for\b.*$/gi, '')
+    .replace(/\s*\+\s*[\d\s\u00BC-\u00BE\u2150-\u215E\/]+\s*(?:cups?|tbsp?|tbs|tsp|ml|g|oz|lbs?)\s+for\b[^,]*/gi, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
     .replace(/\s+/g, ' ')
