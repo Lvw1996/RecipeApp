@@ -18,6 +18,7 @@ import {
   estimateRecipeDifficulty,
   deriveRecipeDifficulty,
 } from './recipeDifficultyShared.js';
+import { parseImportedRecipeFromHtml } from './recipeParserShared.js';
 
 // ---------------------------------------------------------------------------
 // JSON-LD helpers
@@ -244,8 +245,18 @@ function parseRecipeFromHtmlSections($, fallbackTitle, fallbackThumbnail) {
     instructions,
   };
 
+  const pageText = stripHtmlToText($('body').html() || $('body').text() || '');
+  const inferredMeta = inferMissingRecipeMeta({
+    prepTime: parsed.prepTime,
+    cookTime: parsed.cookTime,
+    servings: parsed.servings,
+    instructions: parsed.instructions,
+    pageText,
+  });
+
   return {
     ...parsed,
+    ...inferredMeta,
     difficulty: deriveRecipeDifficulty(parsed, [fallbackTitle]),
   };
 }
@@ -286,6 +297,118 @@ function parseDuration(durationStr) {
   const hours = parseInt(match?.[1] || '0');
   const mins = parseInt(match?.[2] || '0');
   return hours * 60 + mins;
+}
+
+function estimateMinutesFromRange(a, b, unit) {
+  const n1 = Number(a);
+  const n2 = Number(b);
+  if (!Number.isFinite(n1) || !Number.isFinite(n2)) return 0;
+  const avg = (n1 + n2) / 2;
+  return /hour|hr/i.test(String(unit || '')) ? Math.round(avg * 60) : Math.round(avg);
+}
+
+function extractMinutesFromText(text = '') {
+  const source = String(text || '').toLowerCase();
+  if (!source) return 0;
+
+  let total = 0;
+
+  const hourAndMinuteMatches = [...source.matchAll(/(\d+(?:\.\d+)?)\s*(hours?|hrs?)\s*(?:and\s*)?(\d+(?:\.\d+)?)\s*(minutes?|mins?)/gi)];
+  for (const m of hourAndMinuteMatches) {
+    const h = Number(m[1]);
+    const mins = Number(m[3]);
+    if (Number.isFinite(h) && Number.isFinite(mins)) total += Math.round(h * 60 + mins);
+  }
+
+  const rangeSameUnitMatches = [...source.matchAll(/(\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)/gi)];
+  for (const m of rangeSameUnitMatches) {
+    total += estimateMinutesFromRange(m[1], m[2], m[3]);
+  }
+
+  const mixedRangeMatches = [...source.matchAll(/(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)/gi)];
+  for (const m of mixedRangeMatches) {
+    const a = Number(m[1]);
+    const b = Number(m[3]);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    const aMin = /hour|hr/i.test(m[2]) ? a * 60 : a;
+    const bMin = /hour|hr/i.test(m[4]) ? b * 60 : b;
+    total += Math.round((aMin + bMin) / 2);
+  }
+
+  const reduced = source
+    .replace(/(\d+(?:\.\d+)?)\s*(hours?|hrs?)\s*(?:and\s*)?(\d+(?:\.\d+)?)\s*(minutes?|mins?)/gi, ' ')
+    .replace(/(\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)/gi, ' ')
+    .replace(/(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)/gi, ' ');
+
+  const singleMatches = [...reduced.matchAll(/(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?)/gi)];
+  for (const m of singleMatches) {
+    const value = Number(m[1]);
+    if (!Number.isFinite(value)) continue;
+    total += /hour|hr/i.test(m[2]) ? Math.round(value * 60) : Math.round(value);
+  }
+
+  return total;
+}
+
+function inferTimesFromInstructions(instructions = []) {
+  const lines = Array.isArray(instructions) ? instructions : [];
+  let prep = 0;
+  let cook = 0;
+
+  for (const line of lines) {
+    const text = String(line || '').trim();
+    if (!text) continue;
+    const minutes = extractMinutesFromText(text);
+    if (minutes <= 0) continue;
+
+    const lower = text.toLowerCase();
+    const cookLike = /\b(?:bake|roast|simmer|boil|cook|fry|saute|sauté|grill|broil|preheat|heat|oven|stovetop|stove)\b/.test(lower);
+    if (cookLike) cook += minutes;
+    else prep += minutes;
+  }
+
+  return {
+    prepTime: Math.max(0, Math.round(prep)),
+    cookTime: Math.max(0, Math.round(cook)),
+  };
+}
+
+function extractServingsFromText(text = '') {
+  const source = String(text || '').toLowerCase();
+  if (!source) return 0;
+
+  const servesMatch = source.match(/\bserv(?:e|es|ings?)\b\s*[:\-]?\s*(\d+)(?:\s*(?:to|-|–|—)\s*(\d+))?/i);
+  if (servesMatch) {
+    const a = Number(servesMatch[1]);
+    const b = servesMatch[2] ? Number(servesMatch[2]) : 0;
+    if (Number.isFinite(a) && a > 0) {
+      if (Number.isFinite(b) && b > 0) return Math.round((a + b) / 2);
+      return Math.round(a);
+    }
+  }
+
+  const makesMatch = source.match(/\b(?:makes?|yield|yields?)\b\s*[:\-]?\s*(\d+)(?:\s*(?:to|-|–|—)\s*(\d+))?/i);
+  if (makesMatch) {
+    const a = Number(makesMatch[1]);
+    const b = makesMatch[2] ? Number(makesMatch[2]) : 0;
+    if (Number.isFinite(a) && a > 0) {
+      if (Number.isFinite(b) && b > 0) return Math.round((a + b) / 2);
+      return Math.round(a);
+    }
+  }
+
+  return 0;
+}
+
+function inferMissingRecipeMeta({ prepTime = 0, cookTime = 0, servings = 1, instructions = [], pageText = '' }) {
+  const inferredTimes = inferTimesFromInstructions(instructions);
+  const inferredServings = extractServingsFromText(pageText);
+
+  return {
+    prepTime: prepTime > 0 ? prepTime : inferredTimes.prepTime,
+    cookTime: cookTime > 0 ? cookTime : inferredTimes.cookTime,
+    servings: servings > 1 ? servings : (inferredServings > 0 ? inferredServings : servings),
+  };
 }
 
 function extractServings(value) {
@@ -352,6 +475,49 @@ function generateId(title) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_|_$/g, '');
+}
+
+function recipeCompletenessScore(candidate) {
+  if (!candidate) return 0;
+  const ingredientsCount = Array.isArray(candidate.ingredients) ? candidate.ingredients.length : 0;
+  const instructionsCount = Array.isArray(candidate.instructions) ? candidate.instructions.length : 0;
+  const hasTitle = candidate.title ? 1 : 0;
+  return ingredientsCount * 2 + instructionsCount * 3 + hasTitle * 2;
+}
+
+function withImporterDefaults(candidate, fallback = {}) {
+  if (!candidate) return null;
+  const title = String(candidate.title || fallback.title || 'Imported Recipe').trim();
+  const normalized = {
+    id: String(candidate.id || generateId(title)),
+    title,
+    thumbnail: candidate.thumbnail || fallback.thumbnail || '',
+    cookTime: Number(candidate.cookTime) || 0,
+    prepTime: Number(candidate.prepTime) || 0,
+    servings: Number(candidate.servings) || 1,
+    cuisine: candidate.cuisine || 'Global',
+    tags: Array.isArray(candidate.tags) && candidate.tags.length > 0 ? candidate.tags : ['Imported'],
+    nutrition: {
+      calories: Number(candidate?.nutrition?.calories) || 0,
+      protein: Number(candidate?.nutrition?.protein) || 0,
+      carbs: Number(candidate?.nutrition?.carbs) || 0,
+      fat: Number(candidate?.nutrition?.fat) || 0,
+    },
+    ingredients: Array.isArray(candidate.ingredients) ? candidate.ingredients : [],
+    instructions: Array.isArray(candidate.instructions) ? candidate.instructions : [],
+    ...(String(candidate.notes || '').trim() ? { notes: String(candidate.notes).trim() } : {}),
+  };
+
+  normalized.difficulty = deriveRecipeDifficulty(normalized, Array.isArray(fallback.difficultyHints) ? fallback.difficultyHints : [title]);
+  return normalized;
+}
+
+function chooseBestParsedRecipe(primary, secondary, fallback = {}) {
+  const left = withImporterDefaults(primary, fallback);
+  const right = withImporterDefaults(secondary, fallback);
+  if (!left) return right;
+  if (!right) return left;
+  return recipeCompletenessScore(right) > recipeCompletenessScore(left) ? right : left;
 }
 
 function getWprmRecipeIdFromUrl(url) {
@@ -553,6 +719,10 @@ export async function extractRecipeFromUrl(url, options = {}) {
     }
   }
 
+  const sharedParsed = parseImportedRecipeFromHtml(html, {
+    canonicalizeName: (value) => String(value || '').trim().toLowerCase(),
+  });
+
   const $ = cheerio.load(html);
   const htmlNotes = extractRecipeNotes($);
 
@@ -619,13 +789,29 @@ export async function extractRecipeFromUrl(url, options = {}) {
       ...(htmlNotes || jsonNotes ? { notes: htmlNotes || jsonNotes } : {}),
     };
 
-    return {
+    const pageText = stripHtmlToText($('body').html() || $('body').text() || '');
+    const inferredMeta = inferMissingRecipeMeta({
+      prepTime: parsed.prepTime,
+      cookTime: parsed.cookTime,
+      servings: parsed.servings,
+      instructions: parsed.instructions,
+      pageText,
+    });
+
+    const jsonLdRecipe = {
       ...parsed,
+      ...inferredMeta,
       difficulty: deriveRecipeDifficulty(parsed, [
         recipeNode?.difficulty,
         recipeNode?.recipeCategory,
       ]),
     };
+
+    return chooseBestParsedRecipe(jsonLdRecipe, sharedParsed, {
+      title: fallbackTitle,
+      thumbnail: fallbackThumbnail,
+      difficultyHints: [recipeNode?.difficulty, recipeNode?.recipeCategory, fallbackTitle],
+    });
   }
 
   // --- 2. Fallback: scrape HTML directly ---
@@ -670,11 +856,24 @@ export async function extractRecipeFromUrl(url, options = {}) {
     ...(htmlNotes ? { notes: htmlNotes } : {}),
   };
 
+  const pageText = stripHtmlToText($('body').html() || $('body').text() || '');
+  Object.assign(selectorFallbackRecipe, inferMissingRecipeMeta({
+    prepTime: selectorFallbackRecipe.prepTime,
+    cookTime: selectorFallbackRecipe.cookTime,
+    servings: selectorFallbackRecipe.servings,
+    instructions: selectorFallbackRecipe.instructions,
+    pageText,
+  }));
+
   selectorFallbackRecipe.difficulty = deriveRecipeDifficulty(selectorFallbackRecipe, [fallbackTitle, htmlNotes]);
 
-  if ((htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length) {
-    return htmlSectionRecipe;
-  }
+  const selectedFallback = (htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length
+    ? htmlSectionRecipe
+    : selectorFallbackRecipe;
 
-  return selectorFallbackRecipe;
+  return chooseBestParsedRecipe(selectedFallback, sharedParsed, {
+    title: fallbackTitle,
+    thumbnail: fallbackThumbnail,
+    difficultyHints: [fallbackTitle, htmlNotes],
+  });
 }
