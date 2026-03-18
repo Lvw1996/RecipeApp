@@ -19,6 +19,7 @@ export const MEASURE_UNITS = [
   'pounds', 'pound', 'lbs', 'lb',
   'ounces', 'ounce', 'oz',
   'cloves', 'clove',
+  'sticks', 'stick',
   'slices', 'slice',
   'sprigs', 'sprig',
   'bunches', 'bunch',
@@ -45,7 +46,7 @@ export const UNIT_ALIASES = {
   grams: 'g', gram: 'g',
   pounds: 'lb', pound: 'lb', lbs: 'lb',
   ounces: 'oz', ounce: 'oz',
-  cloves: 'clove', slices: 'slice', sprigs: 'sprig',
+  cloves: 'clove', sticks: 'stick', stick: 'stick', slices: 'slice', sprigs: 'sprig',
   bunches: 'bunch', cans: 'can', cubes: 'cube', cube: 'cube', pinches: 'pinch',
   pieces: 'pcs', piece: 'pcs',
 };
@@ -266,6 +267,27 @@ export function parseIngredientString(raw) {
   const unitMatch = remainder.match(unitPattern);
   let unit = inferredUnitFromPack || (unitMatch ? cleanUnit(unitMatch[1]) : '');
   if (unitMatch) remainder = remainder.slice(unitMatch[0].length).trim();
+
+  // Parse parenthetical quantity+unit prefixes, e.g. "(1 stick) unsalted butter"
+  // or the secondary amount in "8 tbsp (1 stick) unsalted butter".
+  const leadingParenQtyUnitMatch = remainder.match(new RegExp(
+    `^\\(\\s*((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\\.?[0-9]+))\\s*(sticks?|stick|g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|grams?|kilograms?|kilos?|pounds?)\\s*\\)\\s*`,
+    'i'
+  ));
+  if (leadingParenQtyUnitMatch) {
+    const parsedQty = roundImportedQty(parseQuantityToken(leadingParenQtyUnitMatch[1]));
+    const parsedUnit = cleanUnit(leadingParenQtyUnitMatch[2]);
+
+    if (!unit) {
+      quantity = parsedQty;
+      unit = parsedUnit;
+    } else if (altQuantity == null) {
+      altQuantity = parsedQty;
+      altUnit = parsedUnit;
+    }
+
+    remainder = remainder.slice(leadingParenQtyUnitMatch[0].length).trim();
+  }
 
   if (unit) {
     const altMatch = remainder.match(new RegExp(
