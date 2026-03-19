@@ -390,7 +390,14 @@ export function parseIngredientString(raw) {
   const commaMatch = remainder.match(/,\s*(.+)$/);
   if (commaMatch) {
     const suffix = commaMatch[1].trim();
-    if (PREP_NOTE_REGEX.test(suffix)) {
+    const prepOnlySuffix = suffix
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/\s*-\s*see\s+notes?.*$/i, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const prepOnlyMatch = /^(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)*(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)(?:\s+(?:and|or)\s+(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)?(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated))*$/i.test(prepOnlySuffix)
+      || /^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)\b/i.test(prepOnlySuffix);
+    if (PREP_NOTE_REGEX.test(suffix) && prepOnlyMatch) {
       if (!prepNote) prepNote = suffix;
       remainder = remainder.slice(0, commaMatch.index).trim();
     }
@@ -426,6 +433,11 @@ export function parseIngredientString(raw) {
   }
 
   if (packSizeNote) prepNote = prepNote ? `${prepNote}; ${packSizeNote}` : packSizeNote;
+
+  // Keep shellfish names as the ingredient when lines start with prep-only descriptors.
+  remainder = remainder
+    .replace(/^(?:(?:peeled|deveined)\s*(?:,|\band\b|\bor\b)?\s*)+(?=(?:shrimp|prawns?)\b)/i, '')
+    .trim();
 
   const rawName = remainder
     .replace(/^to\s+\d+\s+/i, '')
