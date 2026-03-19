@@ -131,6 +131,24 @@ function stripLeadingMeasurementFragments(value) {
   return next;
 }
 
+function trimUnbalancedTrailingClosers(value) {
+  const source = String(value || '');
+  const openCount = (source.match(/\(/g) || []).length;
+  const closeCount = (source.match(/\)/g) || []).length;
+  let extraClosers = Math.max(0, closeCount - openCount);
+  if (extraClosers <= 0) return source.trim();
+
+  return source
+    .replace(/\)+\s*$/, (segment) => {
+      const closersInSegment = (segment.match(/\)/g) || []).length;
+      if (closersInSegment <= 0) return segment;
+      const toDrop = Math.min(extraClosers, closersInSegment);
+      extraClosers -= toDrop;
+      return ')'.repeat(closersInSegment - toDrop);
+    })
+    .trim();
+}
+
 export function stripPriceAnnotations(value) {
   return String(value || '').replace(PRICE_FRAGMENT_REGEX, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -393,7 +411,7 @@ export function parseIngredientString(raw) {
     remainder = remainder.slice(0, trailingPrefMatch.index).trim();
   }
 
-  remainder = remainder.replace(/\)+\s*$/, '').trim();
+  remainder = trimUnbalancedTrailingClosers(remainder);
 
   if (!unit && qtyMatch) {
     const trailingCountMatch = remainder.match(
