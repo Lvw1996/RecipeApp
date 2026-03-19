@@ -26,10 +26,73 @@ const parseServings = (value) => {
   return firstNumber ? Math.max(1, Math.round(Number(firstNumber[0]))) : 1;
 };
 
+const parseAttributes = (tag = '') => {
+  const attrs = {};
+  const attrRe = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(["'])([\s\S]*?)\2/g;
+  let m;
+  while ((m = attrRe.exec(String(tag || ''))) !== null) {
+    attrs[String(m[1] || '').toLowerCase()] = String(m[3] || '');
+  }
+  return attrs;
+};
+
 const getMetaContent = (html, attr, key) => {
-  const regex = new RegExp(`<meta[^>]*${attr}=["']${key}["'][^>]*content=["']([^"']+)["'][^>]*>`, 'i');
-  const match = String(html || '').match(regex);
-  return match ? asCleanLine(decodeEntities(match[1])) : '';
+  const targetAttr = String(attr || '').toLowerCase();
+  const targetKey = String(key || '').toLowerCase();
+  const tags = String(html || '').match(/<meta\b[^>]*>/gi) || [];
+
+  for (const tag of tags) {
+    const attrs = parseAttributes(tag);
+    if (String(attrs[targetAttr] || '').toLowerCase() !== targetKey) continue;
+    const content = String(attrs.content || '').trim();
+    if (content) return asCleanLine(decodeEntities(content));
+  }
+
+  return '';
+};
+
+const imageUrlFromValue = (value) => {
+  if (!value) return '';
+  if (typeof value === 'string') return String(value).trim();
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const next = imageUrlFromValue(entry);
+      if (next) return next;
+    }
+    return '';
+  }
+
+  if (typeof value === 'object') {
+    return (
+      imageUrlFromValue(value.url) ||
+      imageUrlFromValue(value.secure_url) ||
+      imageUrlFromValue(value.contentUrl) ||
+      imageUrlFromValue(value.thumbnailUrl) ||
+      imageUrlFromValue(value.image) ||
+      imageUrlFromValue(value['@id'])
+    );
+  }
+
+  return '';
+};
+
+const normalizeImageUrl = (value, baseUrl = '') => {
+  const raw = imageUrlFromValue(value);
+  if (!raw) return '';
+
+  if (raw.startsWith('//')) return `https:${raw}`;
+  if (/^https?:\/\//i.test(raw) || /^data:/i.test(raw)) return raw;
+
+  if (baseUrl) {
+    try {
+      return new URL(raw, baseUrl).toString();
+    } catch {
+      return raw;
+    }
+  }
+
+  return raw;
 };
 
 const getSectionHtmlByHeading = (html, headingPattern) => {
@@ -389,6 +452,9 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
 
   const thumbnailFromHtml =
     getMetaContent(text, 'property', 'og:image') ||
+    getMetaContent(text, 'property', 'og:image:url') ||
+    getMetaContent(text, 'name', 'og:image') ||
+    getMetaContent(text, 'name', 'og:image:url') ||
     getMetaContent(text, 'name', 'twitter:image');
 
   const methodSection = getSectionHtmlByHeading(text, 'Method|Instructions?');
@@ -427,12 +493,7 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
 
   const parsedRecipe = {
     title: asCleanLine(recipeNode?.name) || titleFromHtml || 'Imported Recipe',
-    thumbnail:
-      typeof recipeNode?.image === 'string'
-        ? recipeNode.image
-        : Array.isArray(recipeNode?.image)
-        ? String(recipeNode.image[0]?.url || recipeNode.image[0] || '')
-        : String(recipeNode?.image?.url || thumbnailFromHtml || ''),
+    thumbnail: normalizeImageUrl(recipeNode?.image || thumbnailFromHtml || '', options.baseUrl || ''),
     prepTime: prepMinutes,
     cookTime: cookMinutes,
     servings: parseServings(recipeNode?.recipeYield || servesMatch?.[1] || ''),
@@ -467,7 +528,7 @@ export const parseImportedRecipeFromUrl = async (url, options = {}) => {
   try {
     const response = await fetchImpl(pageUrl);
     const html = await response.text();
-    return parseImportedRecipeFromHtml(html, options);
+    return parseImportedRecipeFromHtml(html, { ...options, baseUrl: pageUrl });
   } catch {
     return null;
   }
