@@ -393,9 +393,10 @@ export function parseIngredientString(raw) {
     const prepOnlySuffix = suffix
       .replace(/\([^)]*\)/g, ' ')
       .replace(/\s*-\s*see\s+notes?.*$/i, ' ')
+      .replace(/\s*&\s*/g, ' and ')  // treat & as "and" so "peeled & grated" matches prep-only pattern
       .replace(/\s+/g, ' ')
       .trim();
-    const prepOnlyMatch = /^(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)*(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)(?:\s+(?:and|or)\s+(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)?(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated))*$/i.test(prepOnlySuffix)
+    const prepOnlyMatch = /^(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)*(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)(?:\s+into\s+\w+(?:\s+\w+){0,4})?(?:\s+(?:and|or)\s+(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)?(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated))*$/i.test(prepOnlySuffix)
       || /^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)\b/i.test(prepOnlySuffix);
     if (PREP_NOTE_REGEX.test(suffix) && prepOnlyMatch) {
       if (!prepNote) prepNote = suffix;
