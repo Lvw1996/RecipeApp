@@ -54,7 +54,7 @@ export const UNIT_ALIASES = {
 };
 
 export const PREP_NOTE_REGEX =
-  /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)/i;
+  /\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\b|\b(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|flaked|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)\b|^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)/i;
 
 export const PRICE_FRAGMENT_REGEX = /(?:^|\s)[£$€]\s?\d+(?:[.,]\d{1,2})?(?:\s|$)/g;
 
@@ -267,6 +267,9 @@ export function parseIngredientString(raw) {
     .replace(/\(,?\s*optional[^)]*\)/gi, '')
     .replace(/\(first\s+choice[^)]*\)/gi, '')
     .replace(/\(second\s+choice[^)]*\)/gi, '')
+    // Strip "(from [qty] ...)" source annotations - these describe sourcing equivalence,
+    // not what ingredient to buy. The \d guard keeps real alternatives like "(from lemon or lime)".
+    .replace(/\s*\(\s*from\s+\d[^()]*(?:\([^)]*\)[^()]*)*\)/gi, '')
     .replace(/\(\s*,?\s*or\s+[^)]+\)/gi, '')
     .replace(/\(\s*[0-9]+(?:\.[0-9]+)?\s*[-\s]?(?:oz|ounce|ounces|g|kg|ml|l|lb|lbs|pounds?)\s*\)/gi, '')
     .replace(/\([0-9.]+\s*(?:kg|g|lbs?|oz|ml|l|cups?|tbsp|tsp)\)/gi, '')
@@ -396,7 +399,7 @@ export function parseIngredientString(raw) {
       .replace(/\s*&\s*/g, ' and ')  // treat & as "and" so "peeled & grated" matches prep-only pattern
       .replace(/\s+/g, ' ')
       .trim();
-    const prepOnlyMatch = /^(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)*(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)(?:\s+into\s+\w+(?:\s+\w+){0,4})?(?:\s+(?:and|or)\s+(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)?(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated))*$/i.test(prepOnlySuffix)
+    const prepOnlyMatch = /^(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)*(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|flaked|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated)(?:\s+into\s+\w+(?:\s+\w+){0,4})?(?:\s+(?:and|or)\s+(?:(?:finely|roughly|thinly|coarsely|freshly|lightly|gently|well|loosely)\s+)?(?:minced|chopped|diced|sliced|grated|crushed|peeled|trimmed|softened|melted|divided|roasted|toasted|ground|beaten|shredded|flaked|cut|halved|quartered|rinsed|drained|cooked|uncooked|thawed|heated|cooled|whipped|julienned|blanched|deveined|mashed|crumbled|warmed|separated))*$/i.test(prepOnlySuffix)
       || /^(?:to taste|for serving|for drizzling|as needed|room temp|at room temperature|optional|optional garnish|for garnish|garnish)\b/i.test(prepOnlySuffix);
     if (PREP_NOTE_REGEX.test(suffix) && prepOnlyMatch) {
       if (!prepNote) prepNote = suffix;

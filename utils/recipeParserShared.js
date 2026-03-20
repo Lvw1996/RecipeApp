@@ -171,7 +171,7 @@ const cleanIngredientName = (value) => {
     .replace(/\blarge\s+eggs?\b/gi, 'egg')
     .replace(/\beggs?\s+in\s+shell\b/gi, 'egg')
     .replace(/\s+-\s+.*$/g, ' ')
-    .replace(/,\s*(?:cut|sliced|diced|minced|chopped|crushed|grated|divided|softened|melted|to taste|plus more|for serving).*/i, '')
+    .replace(/,\s*(?:flaked|cut|sliced|diced|minced|chopped|crushed|grated|divided|softened|melted|to taste|plus more|for serving).*/i, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
     .replace(/\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently)\s+(?:minced|chopped|diced|sliced|grated|crushed|julienned|shredded)\b$/i, '')
