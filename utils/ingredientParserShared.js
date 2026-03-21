@@ -1,7 +1,7 @@
 // Shared ingredient parsing utilities used by both recipe-app and recipe-app-importer
 
 export const MEASURE_UNITS = [
-  'tablespoons', 'tablespoon', 'tbsp',
+  'tablespoons', 'tablespoon', 'tbsp', 'tbs',
   'teaspoons', 'teaspoon', 'tsp',
   'cups', 'cup', 'c',
   'fluid ounces', 'fluid ounce', 'fl oz',
@@ -31,7 +31,7 @@ export const MEASURE_UNITS = [
 ];
 
 export const UNIT_ALIASES = {
-  tablespoons: 'tbsp', tablespoon: 'tbsp',
+  tablespoons: 'tbsp', tablespoon: 'tbsp', tbs: 'tbsp',
   teaspoons: 'tsp', teaspoon: 'tsp',
   cups: 'cup',
   c: 'cup',
@@ -227,7 +227,12 @@ export function decodeEntities(value) {
     .replace(/&#39;/g, "'")
     .replace(/&quot;/g, '"')
     .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>');
+    .replace(/&gt;/gi, '>')
+    .replace(/&frac12;/gi, '½')
+    .replace(/&frac14;/gi, '¼')
+    .replace(/&frac34;/gi, '¾')
+    .replace(/&frac13;/gi, '⅓')
+    .replace(/&frac23;/gi, '⅔');
 }
 
 export function asCleanLine(value) {

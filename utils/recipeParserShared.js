@@ -534,6 +534,9 @@ export const parseImportedRecipeFromUrl = async (url, options = {}) => {
   const fetchImpl = options.fetchImpl || fetch;
   try {
     const response = await fetchImpl(pageUrl);
+    // Treat any non-2xx response (404, 410, 500, etc.) as a failure — don't
+    // parse error pages which can accidentally look like recipes.
+    if (!response.ok) return null;
     const html = await response.text();
     return parseImportedRecipeFromHtml(html, { ...options, baseUrl: pageUrl });
   } catch {
