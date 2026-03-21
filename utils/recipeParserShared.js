@@ -155,6 +155,13 @@ const cleanIngredientName = (value) => {
   let next = asCleanLine(value);
 
   next = next
+    // Convert leading word-form numbers to digits so the ingredient parser's
+    // compact-can prefix regex (which needs digit tokens) can process them.
+    // e.g. "two 28-ounce cans ..." → "2 28-ounce cans ..."
+    .replace(/^(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+/i, (_, w) => ({ two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9', ten: '10', eleven: '11', twelve: '12' }[w.toLowerCase()] + ' '))
+    // Normalise hyphenated unit adjective "28-ounce" → "28 oz" so numeric can-size
+    // patterns match correctly (regex expects digit[space]unit, not digit-ounce).
+    .replace(/\b(\d+)-ounces?\b/gi, '$1 oz')
     .replace(/\bsour[-\s]?cream\s+greek\s+yogurt\b/gi, 'sour cream or greek yogurt')
     .replace(/\bgreek\s+yogurt\s+sour[-\s]?cream\b/gi, 'greek yogurt or sour cream')
     .replace(/\bfresh\s+herbs?\s+of\s+choice\b/gi, 'fresh herbs of choice')

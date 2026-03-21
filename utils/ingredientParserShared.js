@@ -327,7 +327,7 @@ export function parseIngredientString(raw) {
   // Parse parenthetical quantity+unit prefixes, e.g. "(1 stick) unsalted butter"
   // or the secondary amount in "8 tbsp (1 stick) unsalted butter".
   const leadingParenQtyUnitMatch = remainder.match(new RegExp(
-    `^\\(\\s*((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\\.?[0-9]+))\\s*(sticks?|stick|g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|grams?|kilograms?|kilos?|pounds?)\\s*\\)\\s*`,
+    `^\\(\\s*((?:[0-9]+\\s+[0-9]+\\/[0-9]+)|(?:[0-9]+\\s*${UNICODE_FRACTION_REGEX})|(?:[0-9]+\\/[0-9]+)|(?:${UNICODE_FRACTION_REGEX})|(?:[0-9]*\\.?[0-9]+))\\s*(sticks?|stick|g|kg|ml|l|oz|lb|lbs|cup|cups|tbsp|tsp|tablespoons?|teaspoons?|ounces?|grams?|kilograms?|kilos?|pounds?)\\s*\\)\\s*`,
     'i'
   ));
   if (leadingParenQtyUnitMatch) {
