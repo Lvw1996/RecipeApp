@@ -9,6 +9,8 @@ import {
 } from './ingredientParserShared.js';
 
 const SALT_AND_PEPPER_PATTERN = /\bsalt\b\s*(?:and|&)\s*(?:freshly\s+ground\s+|ground\s+|cracked\s+|black\s+)?\bpepper\b|\b(?:freshly\s+ground\s+|ground\s+|cracked\s+|black\s+)?\bpepper\b\s*(?:and|&)\s*\bsalt\b/i;
+// Matches "1 tsp each paprika and cumin", "each black pepper and cayenne pepper", etc.
+const EACH_AND_PATTERN = /\beach\s+\w.*?\s+and\s+\w/i;
 
 const parseIsoDurationToMinutes = (value) => {
   if (typeof value !== 'string') return Number(value) || 0;
@@ -191,6 +193,23 @@ const cleanIngredientName = (value) => {
 const expandSeasoningLine = (value) => {
   const line = asCleanLine(value);
   if (!line) return [];
+
+  // Split "EACH X and Y" → two separate items sharing the same unit prefix.
+  // e.g. "1 tsp each paprika and cumin" → ["1 tsp paprika", "1 tsp cumin"]
+  if (EACH_AND_PATTERN.test(line)) {
+    const eachIdx = line.search(/\beach\s+\w/i);
+    const prefix = line.slice(0, eachIdx);
+    const afterEach = line.slice(eachIdx).replace(/^each\s+/i, '');
+    const andIdx = afterEach.indexOf(' and ');
+    if (andIdx > 0) {
+      const partA = afterEach.slice(0, andIdx).trim();
+      const partB = afterEach.slice(andIdx + 5).trim();
+      if (partA && partB) {
+        return [prefix + partA, prefix + partB].filter(Boolean);
+      }
+    }
+  }
+
   if (!SALT_AND_PEPPER_PATTERN.test(line)) return [line];
 
   return [
