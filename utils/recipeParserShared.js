@@ -533,8 +533,30 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   const ingredientTextLines = extractTextLines(ingredientsSection).filter(isLikelyIngredientLine);
   if (ingredientLines.length === 0) ingredientLines = ingredientTextLines;
 
+  // Some sites (e.g. Woolworths SA) publish JSON-LD recipeIngredient as bare
+  // names with no quantities/units.  When that's detected, fall back to the
+  // richer <li> elements found in the page HTML which DO carry quantities.
+  const rawLdIngArr = Array.isArray(recipeNode?.recipeIngredient)
+    ? recipeNode.recipeIngredient
+    : recipeNode?.recipeIngredient ? [String(recipeNode.recipeIngredient)] : [];
+  const ldQuantityPoor =
+    rawLdIngArr.length > 0 &&
+    rawLdIngArr.filter((s) => /\d/.test(String(s || ''))).length / rawLdIngArr.length < 0.2;
+
+  const htmlLiIngredients = ldQuantityPoor
+    ? (() => {
+        const qtyUnitRe = /^\d[\d\s/\-]*\s+(?:tsp|tbsp?|tablespoons?|teaspoons?|cups?|ml|g(?!\w)|kg|oz|lbs?|pounds?|pinch|handful|bunch|cloves?|slices?)\b/i;
+        const lines = [...text.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)]
+          .map((m) => asCleanLine(decodeEntities(m[1])))
+          .filter((s) => s && qtyUnitRe.test(s));
+        return lines.length > 0 && lines.length >= rawLdIngArr.length * 0.8 ? lines : null;
+      })()
+    : null;
+
   const ingredients = recipeNode
-    ? ingredientsFromValue(recipeNode.recipeIngredient, canonicalizeName)
+    ? (htmlLiIngredients
+        ? htmlLiIngredients.flatMap((line) => ingredientsFromValue(line, canonicalizeName))
+        : ingredientsFromValue(recipeNode.recipeIngredient, canonicalizeName))
     : ingredientLines.flatMap((line) => ingredientsFromValue(line, canonicalizeName));
 
   const servesMatch = decodeEntities(text).match(/Serves\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
