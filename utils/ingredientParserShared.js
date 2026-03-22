@@ -26,6 +26,7 @@ export const MEASURE_UNITS = [
   'cans', 'can',
   'cubes', 'cube',
   'pinches', 'pinch',
+  'dashes', 'dash',
   'sheets', 'sheet',
   'pieces', 'piece', 'pcs',
 ];
@@ -48,7 +49,7 @@ export const UNIT_ALIASES = {
   pounds: 'lb', pound: 'lb', lbs: 'lb',
   ounces: 'oz', ounce: 'oz',
   cloves: 'clove', sticks: 'stick', stick: 'stick', slices: 'slice', sprigs: 'sprig',
-  bunches: 'bunch', cans: 'can', cubes: 'cube', cube: 'cube', pinches: 'pinch',
+  bunches: 'bunch', cans: 'can', cubes: 'cube', cube: 'cube', pinches: 'pinch', dashes: 'dash',
   sheets: 'sheet',
   pieces: 'pcs', piece: 'pcs',
 };
@@ -232,7 +233,9 @@ export function decodeEntities(value) {
     .replace(/&frac14;/gi, '¼')
     .replace(/&frac34;/gi, '¾')
     .replace(/&frac13;/gi, '⅓')
-    .replace(/&frac23;/gi, '⅔');
+    .replace(/&frac23;/gi, '⅔')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)));
 }
 
 export function asCleanLine(value) {
