@@ -334,7 +334,37 @@ const parseJsonSafely = (value) => {
   try {
     return JSON.parse(value);
   } catch {
-    return null;
+    // Some sites embed raw control characters (e.g. bare \r or \n) inside JSON
+    // string literals, making the JSON technically invalid. Walk through the string
+    // and escape control characters only when they appear inside a string value,
+    // preserving structural whitespace (spaces, tabs, newlines between tokens).
+    try {
+      let sanitized = '';
+      let inString = false;
+      let escaped = false;
+      for (const ch of value) {
+        if (escaped) {
+          sanitized += ch;
+          escaped = false;
+        } else if (ch === '\\') {
+          sanitized += ch;
+          if (inString) escaped = true;
+        } else if (ch === '"') {
+          sanitized += ch;
+          inString = !inString;
+        } else if (inString && ch.charCodeAt(0) < 0x20) {
+          if (ch === '\r') sanitized += '\\r';
+          else if (ch === '\n') sanitized += '\\n';
+          else if (ch === '\t') sanitized += '\\t';
+          else sanitized += '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+        } else {
+          sanitized += ch;
+        }
+      }
+      return JSON.parse(sanitized);
+    } catch {
+      return null;
+    }
   }
 };
 
