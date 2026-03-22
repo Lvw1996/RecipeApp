@@ -480,6 +480,8 @@ export function parseIngredientString(raw) {
   if (/^\d+(?:\.\d+)?$/.test(rawName)) return null;
 
   const name = stripPriceAnnotations(rawName)
+    .replace(/,\s*such\s+as\b.*$/i, '')
+    .replace(/,\s*like\s+\b.*$/i, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\bfor\s+(?:frying|sauteing|sautéing)\b.*$/i, '')
     .replace(/^salted\s+water$/i, 'water')
