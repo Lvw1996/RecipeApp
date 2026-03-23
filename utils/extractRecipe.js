@@ -752,6 +752,9 @@ export async function extractRecipeFromUrl(url, options = {}) {
           }
         }
       }
+      return linked ? { ...ing, subRecipeUrl: linked } : ing;
+      }),
+    };
   };
 
   const $ = cheerio.load(html);
