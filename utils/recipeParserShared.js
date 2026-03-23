@@ -612,8 +612,10 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   // Attach subRecipeUrl to ingredients whose name matches a same-domain link
   // found in the HTML ingredient section (e.g. "Lemon Glaze" linking to
   // https://site.com/lemon-glaze-recipe/).
+  // Fall back to full page HTML when the section heading extractor finds nothing
+  // (e.g. Tasty Recipes / custom containers that don't use a standard h2 heading).
   const ingredientLinkMap = options.baseUrl
-    ? extractIngredientLinkMap(ingredientsSection, options.baseUrl)
+    ? extractIngredientLinkMap(ingredientsSection || text, options.baseUrl)
     : null;
   const ingredientsWithLinks =
     ingredientLinkMap && ingredientLinkMap.size > 0

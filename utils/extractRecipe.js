@@ -721,7 +721,32 @@ export async function extractRecipeFromUrl(url, options = {}) {
 
   const sharedParsed = parseImportedRecipeFromHtml(html, {
     canonicalizeName: (value) => String(value || '').trim().toLowerCase(),
+    baseUrl: url,
   });
+
+  // After choosing the best parsed recipe, re-apply subRecipeUrl values that
+  // were detected in the HTML (same-domain <a href> links inside ingredient <li>
+  // elements). sharedParsed is the only parse path that detects these links;
+  // if jsonLdRecipe wins the chooseBestParsedRecipe comparison its ingredients
+  // come from plain-text JSON-LD which has no link data, so we patch them here.
+  const applySubRecipeLinks = (recipe) => {
+    if (!recipe || !Array.isArray(recipe.ingredients) || !Array.isArray(sharedParsed?.ingredients)) {
+      return recipe;
+    }
+    const urlByName = new Map(
+      sharedParsed.ingredients
+        .filter(i => i?.subRecipeUrl)
+        .map(i => [String(i.name || '').toLowerCase(), i.subRecipeUrl])
+    );
+    if (!urlByName.size) return recipe;
+    return {
+      ...recipe,
+      ingredients: recipe.ingredients.map(ing => {
+        const linked = urlByName.get(String(ing.name || '').toLowerCase());
+        return linked ? { ...ing, subRecipeUrl: linked } : ing;
+      }),
+    };
+  };
 
   const $ = cheerio.load(html);
   const htmlNotes = extractRecipeNotes($);
@@ -807,11 +832,11 @@ export async function extractRecipeFromUrl(url, options = {}) {
       ]),
     };
 
-    return chooseBestParsedRecipe(jsonLdRecipe, sharedParsed, {
+    return applySubRecipeLinks(chooseBestParsedRecipe(jsonLdRecipe, sharedParsed, {
       title: fallbackTitle,
       thumbnail: fallbackThumbnail,
       difficultyHints: [recipeNode?.difficulty, recipeNode?.recipeCategory, fallbackTitle],
-    });
+    }));
   }
 
   // --- 2. Fallback: scrape HTML directly ---
@@ -871,9 +896,9 @@ export async function extractRecipeFromUrl(url, options = {}) {
     ? htmlSectionRecipe
     : selectorFallbackRecipe;
 
-  return chooseBestParsedRecipe(selectedFallback, sharedParsed, {
+  return applySubRecipeLinks(chooseBestParsedRecipe(selectedFallback, sharedParsed, {
     title: fallbackTitle,
     thumbnail: fallbackThumbnail,
     difficultyHints: [fallbackTitle, htmlNotes],
-  });
+  }));
 }
