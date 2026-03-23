@@ -114,6 +114,48 @@ const getSectionHtmlByHeading = (html, headingPattern) => {
   return match ? match[2] : '';
 };
 
+/**
+ * Scans <a href> links inside <li> elements in sectionHtml.
+ * Returns a Map<anchorTextLowercase, absoluteUrl> for links pointing to the
+ * same hostname as baseUrl. Used to detect ingredient lines that link to
+ * sub-recipes on the same site.
+ */
+const TRACKING_PARAMS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'fbclid', 'gclid'];
+
+const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
+  const linkMap = new Map();
+  if (!sectionHtml || !baseUrl) return linkMap;
+
+  let baseDomain;
+  try {
+    baseDomain = new URL(baseUrl).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return linkMap;
+  }
+
+  for (const liMatch of String(sectionHtml).matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
+    const liHtml = liMatch[1];
+    const aMatch = liHtml.match(/<a\s[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/i);
+    if (!aMatch) continue;
+    const rawHref = aMatch[2];
+    const anchorHtml = aMatch[3];
+    try {
+      const resolved = new URL(rawHref, baseUrl);
+      const linkDomain = resolved.hostname.toLowerCase().replace(/^www\./, '');
+      if (linkDomain !== baseDomain) continue;
+      resolved.hash = '';
+      TRACKING_PARAMS.forEach((k) => resolved.searchParams.delete(k));
+      if (resolved.pathname.length > 1) resolved.pathname = resolved.pathname.replace(/\/+$/, '');
+      const anchorText = asCleanLine(decodeEntities(anchorHtml));
+      if (anchorText) linkMap.set(anchorText.toLowerCase(), resolved.toString());
+    } catch {
+      // skip invalid hrefs
+    }
+  }
+
+  return linkMap;
+};
+
 const extractListItems = (sectionHtml) => {
   if (!sectionHtml) return [];
 
@@ -567,6 +609,20 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
         : ingredientsFromValue(recipeNode.recipeIngredient, canonicalizeName))
     : ingredientLines.flatMap((line) => ingredientsFromValue(line, canonicalizeName));
 
+  // Attach subRecipeUrl to ingredients whose name matches a same-domain link
+  // found in the HTML ingredient section (e.g. "Lemon Glaze" linking to
+  // https://site.com/lemon-glaze-recipe/).
+  const ingredientLinkMap = options.baseUrl
+    ? extractIngredientLinkMap(ingredientsSection, options.baseUrl)
+    : null;
+  const ingredientsWithLinks =
+    ingredientLinkMap && ingredientLinkMap.size > 0
+      ? ingredients.map((ing) => {
+          const linked = ingredientLinkMap.get((ing.name || '').toLowerCase());
+          return linked ? { ...ing, subRecipeUrl: linked } : ing;
+        })
+      : ingredients;
+
   const servesMatch = decodeEntities(text).match(/Serves\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
   const notes = stripHtmlToText(notesSection || '') || stripHtmlToText(String(recipeNode?.recipeNotes || recipeNode?.notes || recipeNode?.description || ''));
 
@@ -583,7 +639,7 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     prepTime: prepMinutes,
     cookTime: cookMinutes,
     servings: parseServings(recipeNode?.recipeYield || servesMatch?.[1] || ''),
-    ingredients,
+    ingredients: ingredientsWithLinks,
     instructions,
     ...(notes ? { notes } : {}),
     tags: ['Imported'],
