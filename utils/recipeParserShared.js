@@ -133,16 +133,11 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
     return linkMap;
   }
 
-  for (const liMatch of String(sectionHtml).matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
-    const liHtml = liMatch[1];
-    const aMatch = liHtml.match(/<a\s[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/i);
-    if (!aMatch) continue;
-    const rawHref = aMatch[2];
-    const anchorHtml = aMatch[3];
+  const processAnchor = (rawHref, anchorHtml) => {
     try {
       const resolved = new URL(rawHref, baseUrl);
       const linkDomain = resolved.hostname.toLowerCase().replace(/^www\./, '');
-      if (linkDomain !== baseDomain) continue;
+      if (linkDomain !== baseDomain) return;
       resolved.hash = '';
       TRACKING_PARAMS.forEach((k) => resolved.searchParams.delete(k));
       if (resolved.pathname.length > 1) resolved.pathname = resolved.pathname.replace(/\/+$/, '');
@@ -151,8 +146,26 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
     } catch {
       // skip invalid hrefs
     }
+  };
+
+  // Primary scan: <a> tags inside <li> elements (standard ingredient lists)
+  for (const liMatch of String(sectionHtml).matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
+    const liHtml = liMatch[1];
+    const aMatch = liHtml.match(/<a\s[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/i);
+    if (!aMatch) continue;
+    processAnchor(aMatch[2], aMatch[3]);
   }
 
+  // Fallback scan: any <a> tag anywhere in the section (handles recipe plugins
+  // that wrap ingredient text in <span>/<div> rather than bare <li>;
+  // e.g. WP Recipe Maker cards where the link is on a <span>).
+  if (linkMap.size === 0) {
+    for (const aMatch of String(sectionHtml).matchAll(/<a\s[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi)) {
+      processAnchor(aMatch[2], aMatch[3]);
+    }
+  }
+
+  console.log('[SubRecipe] extractIngredientLinkMap found', linkMap.size, 'same-domain links:', [...linkMap.keys()]);
   return linkMap;
 };
 
@@ -636,6 +649,13 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
           return linked ? { ...ing, subRecipeUrl: linked } : ing;
         })
       : ingredients;
+
+  const linkedCount = ingredientsWithLinks.filter(i => i.subRecipeUrl).length;
+  if (linkedCount > 0) {
+    console.log('[SubRecipe] Attached subRecipeUrl to', linkedCount, 'ingredient(s):', ingredientsWithLinks.filter(i => i.subRecipeUrl).map(i => i.name + ' → ' + i.subRecipeUrl));
+  } else {
+    console.log('[SubRecipe] No subRecipeUrl attached. ingredients:', ingredients.map(i => i.name), 'linkMap size:', ingredientLinkMap?.size ?? 0);
+  }
 
   const servesMatch = decodeEntities(text).match(/Serves\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
   const notes = stripHtmlToText(notesSection || '') || stripHtmlToText(String(recipeNode?.recipeNotes || recipeNode?.notes || recipeNode?.description || ''));
