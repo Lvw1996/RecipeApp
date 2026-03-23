@@ -22,6 +22,8 @@ const parseIsoDurationToMinutes = (value) => {
 };
 
 const parseServings = (value) => {
+  if (Array.isArray(value)) return parseServings(value[0]);
+  if (value && typeof value === 'object') return parseServings(value.value ?? value['@value'] ?? '');
   if (typeof value === 'number') return value > 0 ? Math.round(value) : 1;
   if (typeof value !== 'string') return 1;
   const firstNumber = value.match(/\d+(?:\.\d+)?/);
@@ -465,7 +467,7 @@ const extractServingsFromText = (text = '') => {
     const b = Number(servesMatch[2] || 0);
     if (a > 0) return b > 0 ? Math.round((a + b) / 2) : Math.round(a);
   }
-  const makesMatch = source.match(/\b(?:makes?|yield|yields?)\b\s*[:\-]?\s*(\d+)(?:\s*(?:to|-|–|—)\s*(\d+))?/i);
+  const makesMatch = source.match(/\b(?:makes?|yield|yields?|portions?)\b\s*[:\-]?\s*(\d+)(?:\s*(?:to|-|–|—)\s*(\d+))?/i);
   if (makesMatch) {
     const a = Number(makesMatch[1]);
     const b = Number(makesMatch[2] || 0);
