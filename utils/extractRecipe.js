@@ -742,10 +742,16 @@ export async function extractRecipeFromUrl(url, options = {}) {
     return {
       ...recipe,
       ingredients: recipe.ingredients.map(ing => {
-        const linked = urlByName.get(String(ing.name || '').toLowerCase());
-        return linked ? { ...ing, subRecipeUrl: linked } : ing;
-      }),
-    };
+      const nameLower = String(ing.name || '').toLowerCase();
+      let linked = urlByName.get(nameLower);
+      if (!linked) {
+        for (const [key, url] of urlByName) {
+          if (key.length >= 5 && (nameLower.includes(key) || key.includes(nameLower))) {
+            linked = url;
+            break;
+          }
+        }
+      }
   };
 
   const $ = cheerio.load(html);

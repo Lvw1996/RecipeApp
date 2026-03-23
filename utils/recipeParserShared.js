@@ -620,7 +620,19 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   const ingredientsWithLinks =
     ingredientLinkMap && ingredientLinkMap.size > 0
       ? ingredients.map((ing) => {
-          const linked = ingredientLinkMap.get((ing.name || '').toLowerCase());
+          const nameLower = (ing.name || '').toLowerCase();
+          // Exact match first. Fall back to contains: ingredient name like
+          // "batch Lemon Glaze" should still match anchor key "lemon glaze".
+          // Require anchor >= 5 chars to avoid false positives on short words.
+          let linked = ingredientLinkMap.get(nameLower);
+          if (!linked) {
+            for (const [anchor, url] of ingredientLinkMap) {
+              if (anchor.length >= 5 && nameLower.includes(anchor)) {
+                linked = url;
+                break;
+              }
+            }
+          }
           return linked ? { ...ing, subRecipeUrl: linked } : ing;
         })
       : ingredients;
