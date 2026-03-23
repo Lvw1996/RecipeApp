@@ -26,6 +26,12 @@ const parseServings = (value) => {
   if (value && typeof value === 'object') return parseServings(value.value ?? value['@value'] ?? '');
   if (typeof value === 'number') return value > 0 ? Math.round(value) : 1;
   if (typeof value !== 'string') return 1;
+  const rangeMatch = value.match(/(\d+(?:\.\d+)?)\s*(?:to|[-\u2013\u2014])\s*(\d+(?:\.\d+)?)/i);
+  if (rangeMatch) {
+    const a = Number(rangeMatch[1]);
+    const b = Number(rangeMatch[2]);
+    if (a > 0 && b > 0) return Math.max(1, Math.round((a + b) / 2));
+  }
   const firstNumber = value.match(/\d+(?:\.\d+)?/);
   return firstNumber ? Math.max(1, Math.round(Number(firstNumber[0]))) : 1;
 };
