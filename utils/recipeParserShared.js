@@ -136,11 +136,20 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
   // Matches href with quoted value (href="url" or href='url') OR unquoted (href=url)
   const ANCHOR_RE = /<a\s[^>]*href\s*=\s*(?:(["'])([^"']+)\1|([^\s>"']+))[^>]*>([\s\S]*?)<\/a>/i;
 
+  // Path-prefix blocklist: these are food encyclopaedia / editorial / collection
+  // pages that recipe sites commonly link from ingredient text (e.g. BBC Good Food
+  // links "red onion" to /glossary/red-onion). We only want same-domain links
+  // that point to actual recipe pages, not ingredient guides or category pages.
+  const NON_RECIPE_PATH_RE = /^\/(?:glossary|ingredients?|ingredient-substitutes?|substitutes?|guide|guides|how-to|howto|technique|techniques|tips?|learn|about|collections?|search|topics?|seasonal|new|recipes\/collection)\//i;
+
   const processAnchor = (rawHref, anchorHtml) => {
     try {
       const resolved = new URL(rawHref, baseUrl);
       const linkDomain = resolved.hostname.toLowerCase().replace(/^www\./, '');
       if (linkDomain !== baseDomain) return;
+      // Skip links to non-recipe paths (glossary, ingredient guides, category pages,
+      // etc.). Only links that could plausibly point to a real recipe page are kept.
+      if (NON_RECIPE_PATH_RE.test(resolved.pathname)) return;
       resolved.hash = '';
       TRACKING_PARAMS.forEach((k) => resolved.searchParams.delete(k));
       if (resolved.pathname.length > 1) resolved.pathname = resolved.pathname.replace(/\/+$/, '');
