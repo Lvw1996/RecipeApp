@@ -133,6 +133,9 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
     return linkMap;
   }
 
+  // Matches href with quoted value (href="url" or href='url') OR unquoted (href=url)
+  const ANCHOR_RE = /<a\s[^>]*href\s*=\s*(?:(["'])([^"']+)\1|([^\s>"']+))[^>]*>([\s\S]*?)<\/a>/i;
+
   const processAnchor = (rawHref, anchorHtml) => {
     try {
       const resolved = new URL(rawHref, baseUrl);
@@ -151,17 +154,17 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
   // Primary scan: <a> tags inside <li> elements (standard ingredient lists)
   for (const liMatch of String(sectionHtml).matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
     const liHtml = liMatch[1];
-    const aMatch = liHtml.match(/<a\s[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/i);
+    const aMatch = liHtml.match(ANCHOR_RE);
     if (!aMatch) continue;
-    processAnchor(aMatch[2], aMatch[3]);
+    processAnchor(aMatch[2] || aMatch[3], aMatch[4]);
   }
 
   // Fallback scan: any <a> tag anywhere in the section (handles recipe plugins
   // that wrap ingredient text in <span>/<div> rather than bare <li>;
   // e.g. WP Recipe Maker cards where the link is on a <span>).
   if (linkMap.size === 0) {
-    for (const aMatch of String(sectionHtml).matchAll(/<a\s[^>]*href\s*=\s*(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/a>/gi)) {
-      processAnchor(aMatch[2], aMatch[3]);
+    for (const aMatch of String(sectionHtml).matchAll(new RegExp(ANCHOR_RE.source, 'gi'))) {
+      processAnchor(aMatch[2] || aMatch[3], aMatch[4]);
     }
   }
 
