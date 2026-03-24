@@ -276,6 +276,30 @@ const expandSeasoningLine = (value) => {
     }
   }
 
+  // Split "N unit GENERIC including A, B, C and/or D" → one item per listed ingredient.
+  // e.g. "3 sprigs fresh herbs including parsley, rosemary, thyme and/or sage"
+  //   → ["3 sprigs parsley", "3 sprigs rosemary", "3 sprigs thyme", "3 sprigs sage"]
+  const includingIdx = line.search(/\bincluding\b/i);
+  if (includingIdx > 0) {
+    const beforeIncluding = line.slice(0, includingIdx).trim();
+    const afterIncluding = line.slice(includingIdx).replace(/^including\s*/i, '').trim();
+    if (afterIncluding) {
+      const prefixParsed = parseIngredientString(beforeIncluding);
+      const qtyPart = prefixParsed
+        ? [String(prefixParsed.quantityDisplay || (prefixParsed.quantity != null ? prefixParsed.quantity : '') || ''), String(prefixParsed.unit || '')].filter((s) => s !== '').join(' ')
+        : '';
+      const items = afterIncluding
+        .replace(/\band\/or\b/gi, ',')
+        .replace(/\s+and\b|\s+or\b/gi, ',')
+        .split(',')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0 && /^[a-zA-Z]/.test(s));
+      if (items.length >= 2) {
+        return items.map((item) => (qtyPart ? `${qtyPart} ${item}` : item));
+      }
+    }
+  }
+
   if (!SALT_AND_PEPPER_PATTERN.test(line)) return [line];
 
   return [
