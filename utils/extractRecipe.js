@@ -818,7 +818,12 @@ export async function extractRecipeFromUrl(url, options = {}) {
         carbs: extractNutrition(recipeNode, 'carbohydrateContent'),
         fat: extractNutrition(recipeNode, 'fatContent'),
       },
-      ingredients: htmlIngredients.length > ingredients.length ? htmlIngredients : ingredients,
+      // Prefer HTML ingredients when counts are equal or HTML has more: the visible
+      // HTML preserves "or" alternatives (e.g. "ricotta cheese or cottage cheese") that
+      // JSON-LD recipeIngredient strings commonly truncate to just "ricotta cheese".
+      // Only fall back to JSON-LD when HTML parsing produced fewer items (i.e. the
+      // HTML scraper missed some ingredients that JSON-LD correctly captured).
+      ingredients: htmlIngredients.length >= ingredients.length ? htmlIngredients : ingredients,
       instructions: jsonInstructions.length > 0 ? jsonInstructions : htmlInstructions,
       ...(htmlNotes || jsonNotes ? { notes: htmlNotes || jsonNotes } : {}),
     };

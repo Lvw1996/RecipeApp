@@ -666,6 +666,29 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   const ingredientLinkMap = options.baseUrl
     ? extractIngredientLinkMap(ingredientsSection || text, options.baseUrl)
     : null;
+
+  // Build a secondary map: anchor text → full ingredient name parsed from the
+  // HTML <li>. JSON-LD recipeIngredient entries often omit "or X" alternatives
+  // that appear in the visible HTML (e.g. JSON-LD says "ricotta cheese" but the
+  // <li> reads "ricotta cheese or cottage cheese"). When we attach a subRecipeUrl
+  // we use this map to restore the richer name so the picker fires correctly.
+  const anchorFullNameMap = new Map();
+  if (ingredientLinkMap && ingredientLinkMap.size > 0) {
+    const liScanHtml = ingredientsSection || text;
+    for (const liMatch of String(liScanHtml).matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)) {
+      const liHtml = liMatch[1];
+      const aTagMatch = liHtml.match(/<a[^>]+>([\s\S]*?)<\/a>/i);
+      if (!aTagMatch) continue;
+      const anchorKey = asCleanLine(decodeEntities(aTagMatch[1])).toLowerCase();
+      if (!ingredientLinkMap.has(anchorKey)) continue;
+      const fullLiText = asCleanLine(decodeEntities(liHtml));
+      const parsed = parseIngredientText(fullLiText, (n) => n);
+      if (parsed && parsed.name.toLowerCase() !== anchorKey) {
+        anchorFullNameMap.set(anchorKey, parsed.name);
+      }
+    }
+  }
+
   const ingredientsWithLinks =
     ingredientLinkMap && ingredientLinkMap.size > 0
       ? ingredients.map((ing) => {
@@ -674,15 +697,27 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
           // "batch Lemon Glaze" should still match anchor key "lemon glaze".
           // Require anchor >= 5 chars to avoid false positives on short words.
           let linked = ingredientLinkMap.get(nameLower);
+          let matchedAnchor = linked ? nameLower : null;
           if (!linked) {
             for (const [anchor, url] of ingredientLinkMap) {
               if (anchor.length >= 5 && nameLower.includes(anchor)) {
                 linked = url;
+                matchedAnchor = anchor;
                 break;
               }
             }
           }
-          return linked ? { ...ing, subRecipeUrl: linked } : ing;
+          if (!linked) return ing;
+          // If the HTML <li> had a richer name (e.g. "ricotta cheese or cottage
+          // cheese") than what JSON-LD provided ("ricotta cheese"), use it so
+          // the ingredient alternatives picker fires correctly.
+          const enrichedName = matchedAnchor ? anchorFullNameMap.get(matchedAnchor) : null;
+          // subRecipeAltName records which specific alternative (e.g. "ricotta cheese")
+          // maps to the sub-recipe URL, so applyAlternativeChoices can preserve
+          // linkedRecipeId/isSubRecipe when the user picks that option.
+          return enrichedName
+            ? { ...ing, name: enrichedName, subRecipeUrl: linked, subRecipeAltName: matchedAnchor }
+            : { ...ing, subRecipeUrl: linked };
         })
       : ingredients;
 
