@@ -683,7 +683,12 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
       if (!ingredientLinkMap.has(anchorKey)) continue;
       const fullLiText = asCleanLine(decodeEntities(liHtml));
       const parsed = parseIngredientText(fullLiText, (n) => n);
-      if (parsed && parsed.name.toLowerCase() !== anchorKey) {
+      // Only treat the full li text as an enriched name when it genuinely
+      // contains alternatives (e.g. "ricotta cheese or cottage cheese").
+      // Without the \bor\b guard, footnote suffixes like "pasta sauce* see note"
+      // would produce a parsed.name of "pasta sauce* see note" (different from
+      // the anchor key "pasta sauce") and corrupt the stored ingredient name.
+      if (parsed && parsed.name.toLowerCase() !== anchorKey && /\bor\b/i.test(parsed.name)) {
         anchorFullNameMap.set(anchorKey, parsed.name);
       }
     }
