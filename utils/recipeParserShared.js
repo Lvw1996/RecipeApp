@@ -142,6 +142,11 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
   // that point to actual recipe pages, not ingredient guides or category pages.
   const NON_RECIPE_PATH_RE = /^\/(?:glossary|ingredients?|ingredient-substitutes?|substitutes?|guide|guides|how-to|howto|technique|techniques|tips?|learn|about|collections?|search|topics?|seasonal|new|recipes\/collection)\//i;
 
+  // Slug-suffix blocklist: collection / aggregation pages whose final path
+  // segment ends with these patterns are clearly not single recipe pages.
+  // e.g. BBC Good Food /recipes/cheese-recipe-ideas, /recipes/chicken-recipes
+  const COLLECTION_SLUG_RE = /-(?:ideas?|recipes|recipe-ideas?|collection)(?:\/|$)/i;
+
   const processAnchor = (rawHref, anchorHtml) => {
     try {
       const resolved = new URL(rawHref, baseUrl);
@@ -150,6 +155,9 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
       // Skip links to non-recipe paths (glossary, ingredient guides, category pages,
       // etc.). Only links that could plausibly point to a real recipe page are kept.
       if (NON_RECIPE_PATH_RE.test(resolved.pathname)) return;
+      // Skip collection / aggregation pages identified by a slug suffix
+      // (e.g. /recipes/cheese-recipe-ideas, /recipes/easy-chicken-recipes).
+      if (COLLECTION_SLUG_RE.test(resolved.pathname)) return;
       resolved.hash = '';
       TRACKING_PARAMS.forEach((k) => resolved.searchParams.delete(k));
       if (resolved.pathname.length > 1) resolved.pathname = resolved.pathname.replace(/\/+$/, '');
