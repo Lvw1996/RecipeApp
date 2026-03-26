@@ -385,6 +385,126 @@ const tryExtractNextDataInstructions = (html) => {
   return null;
 };
 
+// Sites like gordonramsay.com use <p><strong>Header:</strong></p> between
+// <ul class="recipe-division"> blocks in their ingredients section.
+// Takes the scoped ingredientsSection HTML (not full page).
+const tryExtractStrongHeaderGroups = (sectionHtml) => {
+  const str = String(sectionHtml || '');
+  if (!str.includes('recipe-division')) return null;
+
+  const groups = [];
+  const ulRe = /<ul[^>]*class="[^"]*recipe-division[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
+  let lastEnd = 0;
+  let m;
+  ulRe.lastIndex = 0;
+  while ((m = ulRe.exec(str)) !== null) {
+    const chunkBefore = str.slice(lastEnd, m.index);
+    let groupName = null;
+
+    // Pattern 1: <p><strong>Header:</strong></p>  (AMP pages)
+    const strongMatch = chunkBefore.match(/<p[^>]*>\s*<strong[^>]*>([\s\S]*?)<\/strong>\s*<\/p>/i);
+    if (strongMatch) {
+      const raw = asCleanLine(decodeEntities(strongMatch[1]));
+      if (!/^serves\b/i.test(raw)) groupName = raw;
+    }
+
+    // Pattern 2: <p class="recipe-division"><span>Header:</span></p>  (non-AMP pages)
+    if (!groupName) {
+      const pDivRe = /<p[^>]*class="[^"]*recipe-division[^"]*"[^>]*>([\s\S]*?)<\/p>/gi;
+      let pM, lastNonBlank = null;
+      pDivRe.lastIndex = 0;
+      while ((pM = pDivRe.exec(chunkBefore)) !== null) {
+        const inner = asCleanLine(decodeEntities(pM[1].replace(/<[^>]+>/g, ' ')));
+        if (inner && !/^serves\b/i.test(inner)) lastNonBlank = inner;
+      }
+      if (lastNonBlank) groupName = lastNonBlank;
+    }
+    const liRe = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+    const ingredientTexts = [];
+    let liM;
+    liRe.lastIndex = 0;
+    const ulContent = m[1];
+    while ((liM = liRe.exec(ulContent)) !== null) {
+      const t = asCleanLine(decodeEntities(liM[1]));
+      if (t) ingredientTexts.push(t);
+    }
+    if (ingredientTexts.length > 0) groups.push({ groupName, ingredientTexts });
+    lastEnd = m.index + m[0].length;
+  }
+
+  // Only activate when at least one group has a real named header
+  if (groups.length === 0 || groups.every((g) => !g.groupName)) return null;
+  return groups;
+};
+
+// Some sites (e.g. gordonramsay.com) append sub-sections like "SPECIAL EQUIPMENT"
+// and "RECIPE NOTES" after the main <ol> steps, inside the same method container,
+// using <p class="recipe-division"> labels + <ul class="recipe-division"> lists.
+// Split these out so they go to notes instead of instructions.
+const splitGrMethodSubSections = (sectionHtml) => {
+  const str = String(sectionHtml || '');
+  if (!str.includes('recipe-division')) return { trimmedMethod: str, bonusNotes: [] };
+
+  // Find end of the main <ol> block (the actual numbered steps)
+  const olEnd = str.indexOf('</ol>');
+  if (olEnd < 0) return { trimmedMethod: str, bonusNotes: [] };
+
+  // After </ol>, look for the first <p class="recipe-division"> with non-blank text
+  const afterOl = str.slice(olEnd + 5);
+  const pDivRe = /<p[^>]*class="[^"]*recipe-division[^"]*"[^>]*>([\s\S]*?)<\/p>/gi;
+  let cutOffset = -1;
+  let pm;
+  pDivRe.lastIndex = 0;
+  while ((pm = pDivRe.exec(afterOl)) !== null) {
+    const inner = asCleanLine(decodeEntities(pm[1].replace(/<[^>]+>/g, ' ')));
+    if (inner) { cutOffset = pm.index; break; }
+  }
+  if (cutOffset < 0) return { trimmedMethod: str, bonusNotes: [] };
+
+  const trimmedMethod = str.slice(0, olEnd + 5 + cutOffset);
+  const remainder = str.slice(olEnd + 5 + cutOffset);
+
+  // Collect <li> text from all <ul class="recipe-division"> blocks in remainder,
+  // prefixed with their section header label.
+  const bonusNotes = [];
+  const ulRe = /<ul[^>]*class="[^"]*recipe-division[^"]*"[^>]*>([\s\S]*?)<\/ul>/gi;
+  let um;
+  ulRe.lastIndex = 0;
+  // To match each ul with its preceding header, walk remainder linearly
+  let searchFrom = 0;
+  const pHeaderRe = /<p[^>]*class="[^"]*recipe-division[^"]*"[^>]*>([\s\S]*?)<\/p>/gi;
+  // Collect all <p class="recipe-division"> headers and <ul class="recipe-division"> blocks
+  // in document order.
+  const tokens = [];
+  let tp;
+  pHeaderRe.lastIndex = 0;
+  while ((tp = pHeaderRe.exec(remainder)) !== null) {
+    const label = asCleanLine(decodeEntities(tp[1].replace(/<[^>]+>/g, ' ')));
+    if (label) tokens.push({ type: 'header', pos: tp.index, label });
+  }
+  ulRe.lastIndex = 0;
+  while ((um = ulRe.exec(remainder)) !== null) {
+    tokens.push({ type: 'ul', pos: um.index, html: um[1] });
+  }
+  tokens.sort((a, b) => a.pos - b.pos);
+  let pendingHeader = null;
+  for (const tok of tokens) {
+    if (tok.type === 'header') {
+      pendingHeader = tok.label;
+    } else {
+      if (pendingHeader) { bonusNotes.push(pendingHeader); pendingHeader = null; }
+      const liRe = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+      let lm;
+      liRe.lastIndex = 0;
+      while ((lm = liRe.exec(tok.html)) !== null) {
+        const t = asCleanLine(decodeEntities(lm[1].replace(/<[^>]+>/g, ' ')));
+        if (t) bonusNotes.push(t);
+      }
+    }
+  }
+  return { trimmedMethod, bonusNotes };
+};
+
 const extractListItems = (sectionHtml) => {
   if (!sectionHtml) return [];
 
@@ -876,19 +996,21 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     getMetaContent(text, 'name', 'og:image:url') ||
     getMetaContent(text, 'name', 'twitter:image');
 
-  const methodSection = getSectionHtmlByHeading(text, 'Method|Instructions?');
+  const methodSection = getSectionHtmlByHeading(text, 'Method|(?:Cooking\\s+)?Instructions?|Directions?');
+  const { trimmedMethod, bonusNotes: methodBonusNotes } = splitGrMethodSubSections(methodSection);
   const ingredientsSection = getSectionHtmlByHeading(text, 'Ingredients?');
   const notesSection = getSectionHtmlByHeading(text, 'Notes?|Recipe\\s*Notes?|Cook\'?s?\\s*Notes?|Tips?');
 
-  let instructions = recipeNode
+  let instructions = recipeNode?.recipeInstructions
     ? instructionLinesFromValue(recipeNode.recipeInstructions)
-    : extractListItems(methodSection);
+    : extractListItems(trimmedMethod);
 
-  const methodLines = extractTextLines(methodSection);
+  const methodLines = extractTextLines(trimmedMethod);
   if (instructions.length === 0 && methodLines.length > 0) {
     instructions = methodLines
       .map((line) => line.replace(/^\d+[.)-]?\s*/, '').trim())
       .filter(Boolean)
+      .filter((line) => line.split(/\s+/).length > 2)  // strip nav-only words like "Back", "Next"
       .filter((line, index, arr) => arr.indexOf(line) === index);
   }
 
@@ -944,9 +1066,19 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
       })()
     : null;
 
+  // When JSON-LD has bare names (no quantities), or has no recipeIngredient at
+  // all, but the HTML ingredients section has <li> items, prefer those directly.
+  // The unit-regex scan above is too strict for formats like "3kg" or "100g".
+  const htmlSectionIngredients =
+    (ldQuantityPoor || rawLdIngArr.length === 0) &&
+    ingredientLines.length > 0 &&
+    (rawLdIngArr.length === 0 || ingredientLines.length >= rawLdIngArr.length * 0.5)
+      ? ingredientLines
+      : null;
+
   let ingredients = recipeNode
-    ? (htmlLiIngredients
-        ? htmlLiIngredients.flatMap((line) => ingredientsFromValue(line, canonicalizeName))
+    ? ((htmlSectionIngredients || htmlLiIngredients)
+        ? (htmlSectionIngredients || htmlLiIngredients).flatMap((line) => ingredientsFromValue(line, canonicalizeName))
         : ingredientsFromValue(recipeNode.recipeIngredient, canonicalizeName))
     : ingredientLines.flatMap((line) => ingredientsFromValue(line, canonicalizeName));
 
@@ -956,10 +1088,11 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   // stops at the first heading element, which is often the group heading itself.
   const htmlGroups = tryExtractWprmIngredientGroups(text)
     || tryExtractAccTitleGroups(text)
-    || tryExtractNextDataGroups(text);
+    || tryExtractNextDataGroups(text)
+    || tryExtractStrongHeaderGroups(ingredientsSection);
   if (htmlGroups) {
     ingredients = htmlGroups.flatMap(({ groupName, ingredientTexts }) => [
-      { name: groupName, sectionHeader: true },
+      ...(groupName ? [{ name: groupName, sectionHeader: true }] : []),
       ...ingredientTexts
         .flatMap((line) => ingredientsFromValue(line, canonicalizeName))
         .filter((ing) => !ing.sectionHeader),
@@ -1042,7 +1175,12 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   }
 
   const servesMatch = decodeEntities(text).match(/Serves\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
-  const notes = stripHtmlToText(notesSection || '') || stripHtmlToText(String(recipeNode?.recipeNotes || recipeNode?.notes || recipeNode?.description || ''));
+  const notes = (() => {
+    const base = stripHtmlToText(notesSection || '') || stripHtmlToText(String(recipeNode?.recipeNotes || recipeNode?.notes || recipeNode?.description || ''));
+    if (methodBonusNotes.length === 0) return base;
+    const extra = methodBonusNotes.join('\n');
+    return base ? base + '\n' + extra : extra;
+  })();
 
   const prepMinutes = recipeNode
     ? parseIsoDurationToMinutes(recipeNode.prepTime) || Number(recipeNode.prepTimeMinutes) || 0
