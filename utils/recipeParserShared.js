@@ -142,6 +142,11 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
   // that point to actual recipe pages, not ingredient guides or category pages.
   const NON_RECIPE_PATH_RE = /^\/(?:glossary|ingredients?|ingredient-substitutes?|substitutes?|guide|guides|how-to|howto|technique|techniques|tips?|learn|about|collections?|search|topics?|seasonal|new|recipes\/collection)\//i;
 
+  // Slug-segment blocklist: catches how-to/what-is patterns embedded anywhere in
+  // the URL path (e.g. "/how-to-cook-rice/", "/what-is-garlic/", "/guide-to-ghee/").
+  // The prefix check above only catches directory-style paths like "/how-to/rice".
+  const GUIDE_SLUG_RE = /(?:^|\/)(?:how-to-|what-is-|all-about-|guide-to-)[\w]/i;
+
   // Slug-suffix blocklist: collection / aggregation pages whose final path
   // segment ends with these patterns are clearly not single recipe pages.
   // e.g. BBC Good Food /recipes/cheese-recipe-ideas, /recipes/chicken-recipes
@@ -155,6 +160,9 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
       // Skip links to non-recipe paths (glossary, ingredient guides, category pages,
       // etc.). Only links that could plausibly point to a real recipe page are kept.
       if (NON_RECIPE_PATH_RE.test(resolved.pathname)) return;
+      // Skip how-to guides and ingredient glossary pages whose slug contains
+      // recognisable guide-style prefixes (e.g. /how-to-cook-rice/, /what-is-garlic/).
+      if (GUIDE_SLUG_RE.test(resolved.pathname)) return;
       // Skip collection / aggregation pages identified by a slug suffix
       // (e.g. /recipes/cheese-recipe-ideas, /recipes/easy-chicken-recipes).
       if (COLLECTION_SLUG_RE.test(resolved.pathname)) return;
@@ -187,6 +195,93 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
 
   console.log('[SubRecipe] extractIngredientLinkMap found', linkMap.size, 'same-domain links:', [...linkMap.keys()]);
   return linkMap;
+};
+
+/**
+ * Detects WP Recipe Maker (WPRM) ingredient group structure in the page HTML
+ * and returns the groups with their ingredient texts, in document order.
+ * WPRM typically omits ingredient group names from the JSON-LD recipeIngredient
+ * flat array — they only appear in the HTML as elements with class
+ * "wprm-recipe-ingredient-group-name".
+ * Returns null when no WPRM groups are found; only activates with ≥ 2 named groups.
+ */
+const tryExtractWprmIngredientGroups = (html) => {
+  const str = String(html || '');
+  if (!str.includes('wprm-recipe-ingredient-group')) return null;
+
+  // Split by group-name h4 headings. A capturing group in split() interleaves
+  // the result as [before, heading0, content0, heading1, content1, ...].
+  // Matches both wprm-recipe-ingredient-group-name and wprm-recipe-ingredient-groupe-name.
+  const parts = str.split(/(<h4[^>]*wprm-recipe-ingredient-group[^>]*>[\s\S]*?<\/h4>)/i);
+  // parts[0] = html before first heading (discard)
+  // parts[1] = full <h4> tag for group 1
+  // parts[2] = html between group 1 and group 2 heading (contains group 1's <li>s)
+  // parts[3] = full <h4> tag for group 2  …etc.
+
+  const groups = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const headingHtml = parts[i];
+    const contentHtml = parts[i + 1] || '';
+
+    const nameMatch = /<h4[^>]*>([\s\S]*?)<\/h4>/i.exec(headingHtml);
+    if (!nameMatch) continue;
+    const name = asCleanLine(decodeEntities(String(nameMatch[1]).replace(/<[^>]+>/g, ' ')))
+      .replace(/:+\s*$/, '').trim();
+    if (!name) continue;
+
+    const ingredientTexts = [];
+    const liRe = /<li[^>]*class="[^"]*wprm-recipe-ingredient[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+    let m;
+    while ((m = liRe.exec(contentHtml)) !== null) {
+      const liText = asCleanLine(decodeEntities(String(m[1]).replace(/<[^>]+>/g, ' '))).trim();
+      if (liText) ingredientTexts.push(liText);
+    }
+
+    groups.push({ groupName: name, ingredientTexts });
+  }
+
+  return groups.length >= 2 ? groups : null;
+};
+
+// Akis Petretzikis and similar custom sites use:
+//   <div class="acc-wrapper">
+//     <div class="acc-title">For the burger patties</div>
+//     <div class="acc-body">
+//       <div class="details-wrapper"><span class="text-grey">500 g</span> ground pork</div>
+//       ...
+//     </div>
+//   </div>
+// Split at each acc-title div; extract text from details-wrapper divs after it.
+const tryExtractAccTitleGroups = (html) => {
+  const str = String(html || '');
+  if (!str.includes('acc-title')) return null;
+
+  // A capturing group in split() interleaves: [before, title0, content0, title1, content1, ...]
+  const parts = str.split(/(<div[^>]*class="[^"]*acc-title[^"]*"[^>]*>[\s\S]*?<\/div>)/i);
+
+  const groups = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const titleHtml = parts[i];
+    const contentHtml = parts[i + 1] || '';
+
+    const nameMatch = /<div[^>]*>([\s\S]*?)<\/div>/i.exec(titleHtml);
+    if (!nameMatch) continue;
+    const name = asCleanLine(decodeEntities(String(nameMatch[1]).replace(/<[^>]+>/g, ' '))).trim();
+    if (!name) continue;
+
+    // Each ingredient is a details-wrapper div: qty in <span class="text-grey">, name as trailing text
+    const ingredientTexts = [];
+    const detailsRe = /<div[^>]*class="[^"]*details-wrapper[^"]*"[^>]*>([\s\S]*?)<\/div>/gi;
+    let m;
+    while ((m = detailsRe.exec(contentHtml)) !== null) {
+      const liText = asCleanLine(decodeEntities(String(m[1]).replace(/<[^>]+>/g, ' '))).trim();
+      if (liText) ingredientTexts.push(liText);
+    }
+
+    if (ingredientTexts.length > 0) groups.push({ groupName: name, ingredientTexts });
+  }
+
+  return groups.length >= 2 ? groups : null;
 };
 
 const extractListItems = (sectionHtml) => {
@@ -264,6 +359,9 @@ const cleanIngredientName = (value) => {
     .replace(/\beggs?\s+in\s+shell\b/gi, 'egg')
     .replace(/\s+-\s+.*$/g, ' ')
     .replace(/,\s*(?:flaked|cut|sliced|diced|minced|chopped|crushed|grated|divided|softened|melted|to taste|plus more|for serving).*/i, '')
+    // Strip editorial suffixes like ", a thicker sliced bread is always nice!" that
+    // contain exclamation marks (author commentary, not ingredient info).
+    .replace(/,\s*[^,]*[!][^,]*$/g, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\b(?:to taste|for serving|as needed|optional|optional garnish|for garnish|garnish)\b.*$/i, '')
     .replace(/\b(?:finely|roughly|thinly|coarsely|freshly|lightly|gently)\s+(?:minced|chopped|diced|sliced|grated|crushed|julienned|shredded)\b$/i, '')
@@ -366,6 +464,30 @@ const parseIngredientText = (line, canonicalizeName) => {
   };
 };
 
+/**
+ * Returns true when a string in a recipeIngredient array is a section-group
+ * label rather than an actual ingredient (e.g. "For the noodles:",
+ * "RAGU BOLOGNESE:", "To garnish:").  Detection rule: ends with ":" and does
+ * not start with a digit or fraction — real measured ingredients never start
+ * with a colon-suffix alone.
+ */
+const isIngredientSectionHeader = (str) => {
+  const s = asCleanLine(String(str || '')).trim();
+  if (!s) return false;
+  // Starts with a number or unicode fraction → it's a quantity, not a header
+  if (/^[\d\u00BC-\u00BE\u2150-\u215E]/.test(s)) return false;
+  // Ends with colon (e.g. "RAGU BOLOGNESE:", "For the noodles:", "Chicken:")
+  if (s.endsWith(':')) return true;
+  // Common section-label prefixes WITHOUT trailing colon, seen on some sites:
+  // "For the burger patties", "For the fries", "To serve", "To garnish", etc.
+  // Only match when the string is short (≤6 words) and contains no digits.
+  if (!/\d/.test(s) && s.split(/\s+/).length <= 6) {
+    if (/^for (?:the|a)\b/i.test(s)) return true;
+    if (/^to (?:serve|garnish|assemble|finish|plate|complete)\b/i.test(s)) return true;
+  }
+  return false;
+};
+
 const ingredientsFromValue = (value, canonicalizeName) => {
   if (!value) return [];
 
@@ -375,11 +497,24 @@ const ingredientsFromValue = (value, canonicalizeName) => {
       .filter((item) => item.name)
       .filter(
         (item, index, self) =>
-          index === self.findIndex((x) => (x.canonicalName || x.name).toLowerCase() === (item.canonicalName || item.name).toLowerCase())
+          index === self.findIndex((x) =>
+            // Section headers are only deduped against other section headers —
+            // never against real ingredients that happen to share the same name
+            // (e.g. a "Chicken:" group label vs. a "chicken" ingredient).
+            Boolean(x.sectionHeader) === Boolean(item.sectionHeader) &&
+            (x.canonicalName || x.name).toLowerCase() === (item.canonicalName || item.name).toLowerCase()
+          )
       );
   }
 
   if (typeof value === 'string') {
+    // Section-group labels (e.g. "For the noodles:", "RAGU BOLOGNESE:") appear
+    // as plain strings in the recipeIngredient array on many recipe sites.
+    // Emit them as display-only rows so the UI can render a group divider.
+    if (isIngredientSectionHeader(value)) {
+      const label = asCleanLine(value).replace(/:+\s*$/, '').trim();
+      return label ? [{ name: label, sectionHeader: true }] : [];
+    }
     return expandSeasoningLine(value)
       .map((line) => parseIngredientText(line, canonicalizeName))
       .filter(Boolean);
@@ -524,7 +659,27 @@ const instructionLinesFromValue = (value) => {
 
   if (typeof value === 'object') {
     const anyValue = value;
-    if (typeof anyValue.text === 'string') return instructionLinesFromValue(anyValue.text);
+    const type = String(anyValue['@type'] || '').toLowerCase();
+
+    // HowToSection (e.g. RecipeTin Eats): emit a section marker before the
+    // steps so the UI can render a group heading ("RAGU", "CHEESE SAUCE").
+    if (type === 'howtosection' && Array.isArray(anyValue.itemListElement)) {
+      const sectionName = asCleanLine(String(anyValue.name || '')).trim();
+      const steps = anyValue.itemListElement.flatMap((entry) => instructionLinesFromValue(entry));
+      return sectionName ? [`__section__:${sectionName}`, ...steps] : steps;
+    }
+
+    // HowToStep with both name and text (e.g. Mediterranean Dish):
+    // prepend the step name so "Make the sponge: In the bowl..." is preserved.
+    if (typeof anyValue.text === 'string') {
+      const stepName = asCleanLine(String(anyValue.name || '')).trim();
+      const stepText = instructionLinesFromValue(anyValue.text);
+      if (stepName && stepText.length > 0 && !stepText[0].startsWith(stepName)) {
+        stepText[0] = `${stepName}: ${stepText[0]}`;
+      }
+      return stepText;
+    }
+
     if (Array.isArray(anyValue.itemListElement)) return instructionLinesFromValue(anyValue.itemListElement);
     if (typeof anyValue.name === 'string') return instructionLinesFromValue(anyValue.name);
   }
@@ -650,21 +805,60 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     rawLdIngArr.length > 0 &&
     rawLdIngArr.filter((s) => /\d/.test(String(s || ''))).length / rawLdIngArr.length < 0.2;
 
-  const htmlLiIngredients = ldQuantityPoor
+  // Also detect when JSON-LD is significantly under-counting ingredients vs the
+  // HTML ingredient section. Some WPRM sites only include the sub-recipe reference
+  // in JSON-LD and omit the remaining ingredients (e.g. Ambitious Kitchen's
+  // Spicy Chicken Melts: JSON-LD has 1 item, visible card has 3).
+  // When ingredientsSection is empty (heading not found, e.g. WPRM custom containers),
+  // count ingredient-like <li> items from the full page using a qty+unit filter so we
+  // don't count unrelated navigation or list items.
+  const _qtyUnitReCount = /^\d[\d\s/\-]*\s+(?:tsp|tbsp?|tablespoons?|teaspoons?|cups?|ml|g(?!\w)|kg|oz|lbs?|pounds?|pinch|handful|bunch|cloves?|slices?|batch)\b/i;
+  const htmlLiCount = ingredientsSection
+    ? (ingredientsSection.match(/<li\b/gi) || []).length
+    : [...text.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)]
+        .map((m) => asCleanLine(decodeEntities(m[1])))
+        .filter((s) => s && _qtyUnitReCount.test(s))
+        .length;
+  // Treat as under-counted when JSON-LD has ≤ 50% of the visible HTML items
+  // and the HTML has at least 2 more than the JSON-LD array.
+  const ldUnderCounted =
+    rawLdIngArr.length > 0 &&
+    htmlLiCount > rawLdIngArr.length &&
+    htmlLiCount >= rawLdIngArr.length + 2 &&
+    htmlLiCount / rawLdIngArr.length >= 2;
+
+  const htmlLiIngredients = (ldQuantityPoor || ldUnderCounted)
     ? (() => {
-        const qtyUnitRe = /^\d[\d\s/\-]*\s+(?:tsp|tbsp?|tablespoons?|teaspoons?|cups?|ml|g(?!\w)|kg|oz|lbs?|pounds?|pinch|handful|bunch|cloves?|slices?)\b/i;
-        const lines = [...text.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)]
+        const qtyUnitRe = _qtyUnitReCount;
+        const scanHtml = ldUnderCounted ? (ingredientsSection || text) : text;
+        const lines = [...scanHtml.matchAll(/<li[^>]*>([\s\S]*?)<\/li>/gi)]
           .map((m) => asCleanLine(decodeEntities(m[1])))
           .filter((s) => s && qtyUnitRe.test(s));
         return lines.length > 0 && lines.length >= rawLdIngArr.length * 0.8 ? lines : null;
       })()
     : null;
 
-  const ingredients = recipeNode
+  let ingredients = recipeNode
     ? (htmlLiIngredients
         ? htmlLiIngredients.flatMap((line) => ingredientsFromValue(line, canonicalizeName))
         : ingredientsFromValue(recipeNode.recipeIngredient, canonicalizeName))
     : ingredientLines.flatMap((line) => ingredientsFromValue(line, canonicalizeName));
+
+  // Some sites omit ingredient group names from JSON-LD — they only appear in HTML.
+  // Try site-specific extractors in priority order; use the first that succeeds.
+  // Always pass full `text` (not `ingredientsSection`) since section extraction
+  // stops at the first heading element, which is often the group heading itself.
+  const htmlGroups = tryExtractWprmIngredientGroups(text) || tryExtractAccTitleGroups(text);
+  const ingIdx = text.indexOf('"ingredients"');
+  console.log('[Parser] ingJSON ctx:', ingIdx >= 0 ? text.slice(ingIdx, ingIdx + 600) : 'NOT FOUND');
+  if (htmlGroups) {
+    ingredients = htmlGroups.flatMap(({ groupName, ingredientTexts }) => [
+      { name: groupName, sectionHeader: true },
+      ...ingredientTexts
+        .flatMap((line) => ingredientsFromValue(line, canonicalizeName))
+        .filter((ing) => !ing.sectionHeader),
+    ]);
+  }
 
   // Attach subRecipeUrl to ingredients whose name matches a same-domain link
   // found in the HTML ingredient section (e.g. "Lemon Glaze" linking to
