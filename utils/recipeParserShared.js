@@ -284,6 +284,107 @@ const tryExtractAccTitleGroups = (html) => {
   return groups.length >= 2 ? groups : null;
 };
 
+// Next.js sites (e.g. Akis Petretzikis) embed page data in a <script> block as
+// JSON with structure: {"ingredient_sections":[{"title":"For the burger patties",
+// "ingredients":[{"quantity":"500","unit":"g","title":"ground pork","info":"neck"},...]},...]
+// Parse that blob directly to get grouped ingredients with quantities.
+const tryExtractNextDataGroups = (html) => {
+  const str = String(html || '');
+  if (!str.includes('ingredient_sections')) return null;
+
+  // Find the script block that contains ingredient_sections
+  const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let sm;
+  while ((sm = scriptRe.exec(str)) !== null) {
+    if (!sm[1].includes('ingredient_sections')) continue;
+
+    // Extract the ingredient_sections array using bracket counting
+    const keyIdx = sm[1].indexOf('"ingredient_sections"');
+    if (keyIdx < 0) continue;
+    const arrStart = sm[1].indexOf('[', keyIdx);
+    if (arrStart < 0) continue;
+    let depth = 0, arrEnd = -1;
+    for (let ci = arrStart; ci < sm[1].length; ci++) {
+      if (sm[1][ci] === '[') depth++;
+      else if (sm[1][ci] === ']') { depth--; if (depth === 0) { arrEnd = ci; break; } }
+    }
+    if (arrEnd < 0) continue;
+
+    let sections;
+    try { sections = JSON.parse(sm[1].slice(arrStart, arrEnd + 1)); } catch { continue; }
+    if (!Array.isArray(sections) || sections.length < 2) continue;
+
+    const groups = [];
+    for (const sec of sections) {
+      const groupName = asCleanLine(String(sec.title || '')).trim();
+      if (!groupName || !Array.isArray(sec.ingredients)) continue;
+
+      const ingredientTexts = [];
+      for (const ing of sec.ingredients) {
+        const qty = String(ing.quantity || '').trim();
+        const unit = String(ing.unit || '').trim();
+        const title = asCleanLine(String(ing.title || '')).trim();
+        const info = asCleanLine(String(ing.info || '')).trim();
+        if (!title) continue;
+        // Build "500 g ground pork, neck" style string
+        const parts = [qty, unit, title, info ? ', ' + info : ''].filter(Boolean);
+        ingredientTexts.push(parts.join(' ').replace(/\s{2,}/g, ' ').trim());
+      }
+
+      if (ingredientTexts.length > 0) groups.push({ groupName, ingredientTexts });
+    }
+
+    return groups.length >= 2 ? groups : null;
+  }
+
+  return null;
+};
+
+// Companion to tryExtractNextDataGroups: parses the "method" array from the
+// same Next.js blob — [{"section":"For the burger patties","steps":[{"step":"..."}]}]
+// Returns a flat instruction array using the __section__:Name prefix convention.
+const tryExtractNextDataInstructions = (html) => {
+  const str = String(html || '');
+  if (!str.includes('"method"')) return null;
+
+  const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let sm;
+  while ((sm = scriptRe.exec(str)) !== null) {
+    if (!sm[1].includes('"section"') || !sm[1].includes('"steps"')) continue;
+
+    const keyIdx = sm[1].indexOf('"method"');
+    if (keyIdx < 0) continue;
+    const arrStart = sm[1].indexOf('[', keyIdx);
+    if (arrStart < 0) continue;
+    let depth = 0, arrEnd = -1;
+    for (let ci = arrStart; ci < sm[1].length; ci++) {
+      if (sm[1][ci] === '[') depth++;
+      else if (sm[1][ci] === ']') { depth--; if (depth === 0) { arrEnd = ci; break; } }
+    }
+    if (arrEnd < 0) continue;
+
+    let method;
+    try { method = JSON.parse(sm[1].slice(arrStart, arrEnd + 1)); } catch { continue; }
+    if (!Array.isArray(method) || method.length === 0) continue;
+
+    const lines = [];
+    for (const sec of method) {
+      const sectionName = asCleanLine(String(sec.section || '')).trim();
+      if (sectionName) lines.push(`__section__:${sectionName}`);
+      if (Array.isArray(sec.steps)) {
+        for (const s of sec.steps) {
+          const step = asCleanLine(decodeEntities(String(s.step || '').replace(/<[^>]+>/g, ' '))).trim();
+          if (step) lines.push(step);
+        }
+      }
+    }
+
+    return lines.length > 0 ? lines : null;
+  }
+
+  return null;
+};
+
 const extractListItems = (sectionHtml) => {
   if (!sectionHtml) return [];
 
@@ -791,6 +892,11 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
       .filter((line, index, arr) => arr.indexOf(line) === index);
   }
 
+  // Next.js sites (e.g. Akis Petretzikis) embed sectioned instructions in a
+  // "method" array in the page blob. Override if the blob has richer data.
+  const nextDataInstructions = tryExtractNextDataInstructions(text);
+  if (nextDataInstructions) instructions = nextDataInstructions;
+
   let ingredientLines = extractListItems(ingredientsSection);
   const ingredientTextLines = extractTextLines(ingredientsSection).filter(isLikelyIngredientLine);
   if (ingredientLines.length === 0) ingredientLines = ingredientTextLines;
@@ -844,13 +950,13 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
         : ingredientsFromValue(recipeNode.recipeIngredient, canonicalizeName))
     : ingredientLines.flatMap((line) => ingredientsFromValue(line, canonicalizeName));
 
-  // Some sites omit ingredient group names from JSON-LD — they only appear in HTML.
-  // Try site-specific extractors in priority order; use the first that succeeds.
+  // Some sites omit ingredient group names from JSON-LD — they only appear in HTML
+  // or an embedded data blob. Try extractors in priority order.
   // Always pass full `text` (not `ingredientsSection`) since section extraction
   // stops at the first heading element, which is often the group heading itself.
-  const htmlGroups = tryExtractWprmIngredientGroups(text) || tryExtractAccTitleGroups(text);
-  const ingIdx = text.indexOf('"ingredients"');
-  console.log('[Parser] ingJSON ctx:', ingIdx >= 0 ? text.slice(ingIdx, ingIdx + 600) : 'NOT FOUND');
+  const htmlGroups = tryExtractWprmIngredientGroups(text)
+    || tryExtractAccTitleGroups(text)
+    || tryExtractNextDataGroups(text);
   if (htmlGroups) {
     ingredients = htmlGroups.flatMap(({ groupName, ingredientTexts }) => [
       { name: groupName, sectionHeader: true },
