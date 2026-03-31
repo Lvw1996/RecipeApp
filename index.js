@@ -1,17 +1,75 @@
 import express from 'express';
 import bodyParser from 'body-parser';
+import rateLimit from 'express-rate-limit';
 import { extractRecipeFromUrl } from './utils/extractRecipe.js';
+import {
+  isSocialVideoUrl,
+  extractCaptionFromVideoUrl,
+  parseCaptionWithLLM,
+} from './utils/extractVideoRecipe.js';
+import { validateRecipeUrl } from './utils/urlValidator.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const REQUEST_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 45000);
+const VIDEO_TIMEOUT_MS = Number(process.env.VIDEO_IMPORT_TIMEOUT_MS || 50000);
+
+// ── CORS ───────────────────────────────────────────────────────────────────
+// Mobile clients (iOS/Android) do not send an Origin header, so traditional
+// CORS restrictions don't apply. We still set these headers so browser-based
+// callers (e.g. future web app) receive explicit policy.
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Import-Secret');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 
 app.use(bodyParser.json());
 
-app.post('/import', async (req, res) => {
+// ── Authentication ─────────────────────────────────────────────────────────
+// Requires a pre-shared secret sent by the mobile app as X-Import-Secret.
+// Set IMPORT_SECRET in Railway env vars. When unset (local dev), auth is skipped.
+const IMPORT_SECRET = process.env.IMPORT_SECRET || '';
+
+function requireAuth(req, res, next) {
+  if (!IMPORT_SECRET) return next(); // Dev mode: no secret configured
+  const provided = req.headers['x-import-secret'];
+  if (!provided || provided !== IMPORT_SECRET) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// ── Rate limiting ──────────────────────────────────────────────────────────
+const standardLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+
+const videoLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' },
+});
+
+// ── POST /import — existing web recipe import (unchanged) ──────────────────
+app.post('/import', requireAuth, standardLimiter, async (req, res) => {
   const { url } = req.body;
 
   if (!url) return res.status(400).json({ error: 'No URL provided' });
+
+  try {
+    validateRecipeUrl(url);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -38,6 +96,119 @@ app.post('/import', async (req, res) => {
     return res.status(500).json({ error: 'Failed to extract recipe' });
   } finally {
     clearTimeout(timeoutId);
+  }
+});
+
+// ── POST /import-video — TikTok / Instagram caption-based recipe import ────
+//
+// Flow:
+//   1. yt-dlp extracts caption + metadata (no video download)
+//   2. GPT-4o mini parses caption → structured recipe JSON
+//
+// Responses:
+//   200 { ...recipe }               — recipe found and parsed
+//   200 { error: 'no_recipe', caption: string }  — yt-dlp worked but LLM found no recipe
+//   200 { error: 'no_caption', caption: '' }     — yt-dlp found no usable caption
+//   400                             — missing / non-social URL
+//   504                             — timeout
+//   500                             — unexpected error
+app.post('/import-video', requireAuth, videoLimiter, async (req, res) => {
+  const { url } = req.body;
+
+  if (!url) return res.status(400).json({ error: 'No URL provided' });
+  if (!isSocialVideoUrl(url)) {
+    return res.status(400).json({ error: 'URL is not a supported social video URL (TikTok or Instagram)' });
+  }
+
+  const timedOut = { value: false };
+  const timeoutId = setTimeout(() => {
+    timedOut.value = true;
+  }, VIDEO_TIMEOUT_MS);
+
+  try {
+    // Step 1: extract caption via yt-dlp
+    let captionData;
+    try {
+      captionData = await extractCaptionFromVideoUrl(url);
+    } catch (err) {
+      console.error('[VideoImport] yt-dlp error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (timedOut.value) {
+      return res.status(504).json({ error: 'Video import timed out during caption extraction' });
+    }
+
+    const { caption, title, thumbnail, uploader } = captionData;
+
+    if (!caption) {
+      console.log('[VideoImport] No caption found for:', url);
+      return res.json({ error: 'no_caption', caption: '' });
+    }
+
+    // Step 2: parse caption with GPT-4o mini
+    let recipe;
+    try {
+      recipe = await parseCaptionWithLLM(caption);
+    } catch (err) {
+      console.error('[VideoImport] LLM error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+
+    if (timedOut.value) {
+      return res.status(504).json({ error: 'Video import timed out during recipe parsing' });
+    }
+
+    if (!recipe) {
+      console.log('[VideoImport] LLM found no recipe in caption for:', url);
+      return res.json({ error: 'no_recipe', caption });
+    }
+
+    // Merge in metadata yt-dlp provided but the LLM didn't fill
+    recipe.thumbnail = recipe.thumbnail || thumbnail;
+    recipe.title = recipe.title || title || `Recipe by ${uploader}`;
+    recipe.importUrl = url;
+
+    console.log('[VideoImport] ✅ Recipe parsed:', recipe.title, '| ingredients:', recipe.ingredients?.length);
+    return res.json(recipe);
+
+  } catch (err) {
+    console.error('[VideoImport] Unexpected error:', err.message);
+    return res.status(500).json({ error: 'Failed to import video recipe' });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+});
+
+// ── POST /parse-caption — parse raw caption text into a recipe ─────────────
+//
+// Used by the app's fallback caption editor: user has edited the raw caption
+// and taps "Parse Recipe", which hits this endpoint.
+//
+// Responses:
+//   200 { ...recipe }               — recipe found
+//   200 { error: 'no_recipe' }      — LLM found no recipe in the text
+//   400                             — missing text
+//   500                             — API error
+app.post('/parse-caption', requireAuth, videoLimiter, async (req, res) => {
+  const { text } = req.body;
+
+  if (!text || !text.trim()) {
+    return res.status(400).json({ error: 'No text provided' });
+  }
+
+  try {
+    const recipe = await parseCaptionWithLLM(text);
+
+    if (!recipe) {
+      return res.json({ error: 'no_recipe' });
+    }
+
+    console.log('[ParseCaption] ✅ Recipe parsed:', recipe.title, '| ingredients:', recipe.ingredients?.length);
+    return res.json(recipe);
+  } catch (err) {
+    console.error('[ParseCaption] Error:', err.message);
+    return res.status(500).json({ error: err.message || 'Failed to parse caption' });
   }
 });
 

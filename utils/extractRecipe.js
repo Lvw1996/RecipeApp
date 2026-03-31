@@ -1,6 +1,5 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import https from 'node:https';
 import {
   MEASURE_UNITS,
   cleanUnit,
@@ -665,7 +664,7 @@ export async function extractRecipeFromUrl(url, options = {}) {
   const requestConfig = {
     signal,
     timeout: requestTimeoutMs,
-    maxRedirects: 8,
+    maxRedirects: 3,
     maxContentLength: 15 * 1024 * 1024,
     maxBodyLength: 15 * 1024 * 1024,
     headers: {
@@ -676,47 +675,24 @@ export async function extractRecipeFromUrl(url, options = {}) {
     },
   };
 
-  const isTlsChainError = (error) => {
-    const msg = String(error?.message || '').toLowerCase();
-    const code = String(error?.code || '').toLowerCase();
-    return (
-      code === 'unable_to_verify_leaf_signature' ||
-      code === 'self_signed_cert_in_chain' ||
-      msg.includes('unable to verify the first certificate') ||
-      msg.includes('unable to verify leaf signature') ||
-      msg.includes('self signed certificate in certificate chain')
-    );
-  };
-
   let html = '';
   try {
     const response = await axios.get(url, requestConfig);
     html = response.data;
   } catch (error) {
-    // Some sites have incomplete TLS chains that fail Node validation but still serve valid HTML.
-    // Retry once with relaxed TLS only for known certificate-chain failures.
-    if (isTlsChainError(error) && !signal?.aborted) {
-      const insecureConfig = {
-        ...requestConfig,
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
-      };
-      const insecureResponse = await axios.get(url, insecureConfig);
-      html = insecureResponse.data;
-    } else {
     // Retry once for transient upstream stalls or socket hiccups.
-      const retryable =
-        error?.code === 'ECONNABORTED' ||
-        error?.code === 'ETIMEDOUT' ||
-        error?.code === 'ECONNRESET' ||
-        /timeout|socket|network/i.test(String(error?.message || ''));
+    const retryable =
+      error?.code === 'ECONNABORTED' ||
+      error?.code === 'ETIMEDOUT' ||
+      error?.code === 'ECONNRESET' ||
+      /timeout|socket|network/i.test(String(error?.message || ''));
 
-      if (!retryable || signal?.aborted) {
-        throw error;
-      }
-
-      const response = await axios.get(url, requestConfig);
-      html = response.data;
+    if (!retryable || signal?.aborted) {
+      throw error;
     }
+
+    const response = await axios.get(url, requestConfig);
+    html = response.data;
   }
 
   const sharedParsed = parseImportedRecipeFromHtml(html, {
