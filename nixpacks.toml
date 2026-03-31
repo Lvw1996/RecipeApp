@@ -1,4 +1,4 @@
 # nixpacks.toml
 # Installs yt-dlp (and Python, which it requires) alongside Node.js on Railway.
 [phases.setup]
-nixPkgs = ['yt-dlp', 'python3']
+nixPkgs = ['nodejs_20', 'yt-dlp', 'python3']
