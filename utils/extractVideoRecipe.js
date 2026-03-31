@@ -2,14 +2,14 @@
 //
 // Extracts recipe data from social video URLs (TikTok, Instagram) by:
 //   1. Using yt-dlp to extract the video caption / description
-//   2. Sending the caption to GPT-4o mini to parse it into structured recipe JSON
+//   2. Sending the caption to Gemini 2.0 Flash to parse it into structured recipe JSON
 //
 // The returned recipe shape matches what extractRecipe.js produces so the
 // existing /import response handling on the app side works unchanged.
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const execFileAsync = promisify(execFile);
 
@@ -87,15 +87,15 @@ export async function extractCaptionFromVideoUrl(videoUrl) {
 }
 
 // ---------------------------------------------------------------------------
-// GPT-4o mini recipe parser
+// Gemini 2.0 Flash recipe parser
 // ---------------------------------------------------------------------------
 
-// OpenAI client is created lazily inside parseCaptionWithLLM so the server
-// can start without crashing when OPENAI_API_KEY has not been set yet.
-let _openai = null;
-function getOpenAI() {
-  if (!_openai) _openai = new OpenAI();
-  return _openai;
+// Client is created lazily so the server can start without crashing when
+// GEMINI_API_KEY has not been set yet.
+let _genai = null;
+function getGenAI() {
+  if (!_genai) _genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+  return _genai;
 }
 
 const SYSTEM_PROMPT = `You are a recipe extraction assistant. The user will give you the caption or description text from a social media cooking video (TikTok or Instagram). Your job is to extract a structured recipe from that text if one exists.
@@ -130,7 +130,7 @@ Rules:
 - Output English regardless of the input language.`;
 
 /**
- * Sends caption text to GPT-4o mini and returns a parsed recipe or null.
+ * Sends caption text to Gemini 2.0 Flash and returns a parsed recipe or null.
  *
  * @param {string} captionText
  * @returns {Promise<object | null>} ImportedRecipe-shaped object, or null if no recipe found
@@ -138,26 +138,23 @@ Rules:
 export async function parseCaptionWithLLM(captionText) {
   if (!captionText || captionText.trim().length < 10) return null;
 
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw new Error('OPENAI_API_KEY environment variable is not set.');
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY environment variable is not set.');
   }
 
   let responseText;
   try {
-    const completion = await getOpenAI().chat.completions.create({
-      model: 'gpt-4o-mini',
-      temperature: 0,
-      max_tokens: 2048,
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: captionText.slice(0, 8000) }, // cap at 8k chars
-      ],
+    const model = getGenAI().getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      generationConfig: { temperature: 0, maxOutputTokens: 2048 },
     });
-    responseText = completion.choices[0]?.message?.content?.trim() || '';
+    const result = await model.generateContent(
+      SYSTEM_PROMPT + '\n\nCaption text:\n' + captionText.slice(0, 8000),
+    );
+    responseText = result.response.text().trim();
   } catch (err) {
-    console.error('[VideoImport] OpenAI API error:', err?.message);
-    throw new Error('OpenAI API call failed: ' + (err?.message || 'unknown error'));
+    console.error('[VideoImport] Gemini API error:', err?.message);
+    throw new Error('Gemini API call failed: ' + (err?.message || 'unknown error'));
   }
 
   let parsed;

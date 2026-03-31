@@ -193,7 +193,6 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
     }
   }
 
-  console.log('[SubRecipe] extractIngredientLinkMap found', linkMap.size, 'same-domain links:', [...linkMap.keys()]);
   return linkMap;
 };
 
@@ -1168,12 +1167,6 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
       : ingredients;
 
   const linkedCount = ingredientsWithLinks.filter(i => i.subRecipeUrl).length;
-  if (linkedCount > 0) {
-    console.log('[SubRecipe] Attached subRecipeUrl to', linkedCount, 'ingredient(s):', ingredientsWithLinks.filter(i => i.subRecipeUrl).map(i => i.name + ' → ' + i.subRecipeUrl));
-  } else {
-    console.log('[SubRecipe] No subRecipeUrl attached. ingredients:', ingredients.map(i => i.name), 'linkMap size:', ingredientLinkMap?.size ?? 0);
-  }
-
   const servesMatch = decodeEntities(text).match(/Serves\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
   const notes = (() => {
     const base = stripHtmlToText(notesSection || '') || stripHtmlToText(String(recipeNode?.recipeNotes || recipeNode?.notes || recipeNode?.description || ''));
