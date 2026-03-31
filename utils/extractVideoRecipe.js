@@ -90,7 +90,13 @@ export async function extractCaptionFromVideoUrl(videoUrl) {
 // GPT-4o mini recipe parser
 // ---------------------------------------------------------------------------
 
-const openai = new OpenAI(); // uses OPENAI_API_KEY env var automatically
+// OpenAI client is created lazily inside parseCaptionWithLLM so the server
+// can start without crashing when OPENAI_API_KEY has not been set yet.
+let _openai = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI();
+  return _openai;
+}
 
 const SYSTEM_PROMPT = `You are a recipe extraction assistant. The user will give you the caption or description text from a social media cooking video (TikTok or Instagram). Your job is to extract a structured recipe from that text if one exists.
 
@@ -139,7 +145,7 @@ export async function parseCaptionWithLLM(captionText) {
 
   let responseText;
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await getOpenAI().chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0,
       max_tokens: 2048,
