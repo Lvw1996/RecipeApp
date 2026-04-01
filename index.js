@@ -11,6 +11,7 @@ import { validateRecipeUrl } from './utils/urlValidator.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const app = express();
+app.set('trust proxy', 1); // Railway sits behind a proxy
 const PORT = process.env.PORT || 3000;
 const REQUEST_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 45000);
 const VIDEO_TIMEOUT_MS = Number(process.env.VIDEO_IMPORT_TIMEOUT_MS || 50000);
