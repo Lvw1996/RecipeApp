@@ -297,7 +297,7 @@ app.post('/parse-receipt', requireAuth, standardLimiter, async (req, res) => {
   try {
     const model = getReceiptGenAI().getGenerativeModel({
       model: 'gemini-2.5-flash',
-      generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+      generationConfig: { temperature: 0, maxOutputTokens: 2048, responseMimeType: 'application/json' },
     });
 
     const result = await model.generateContent([
