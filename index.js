@@ -27,7 +27,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '20mb' }));
 
 // ── Authentication ─────────────────────────────────────────────────────────
 // Requires a pre-shared secret sent by the mobile app as X-Import-Secret.
