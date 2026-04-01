@@ -1,6 +1,6 @@
 // utils/extractVideoRecipe.js
 //
-// Extracts recipe data from social video URLs (TikTok, Instagram) by:
+// Extracts recipe data from social video URLs (TikTok, Instagram, YouTube) by:
 //   1. Using yt-dlp to extract the video caption / description
 //   2. Sending the caption to Gemini 2.0 Flash to parse it into structured recipe JSON
 //
@@ -23,6 +23,10 @@ const SOCIAL_DOMAINS = [
   'www.tiktok.com',
   'instagram.com',
   'www.instagram.com',
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'youtu.be',
 ];
 
 export function isSocialVideoUrl(url) {
