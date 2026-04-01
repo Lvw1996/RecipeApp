@@ -280,13 +280,52 @@ async function extractCaptionFromTikTokPage(url) {
   caption = caption.trim();
   if (!caption) throw new Error('TikTok "desc" field was empty');
 
-  // TikTok doesn't serve og:image to crawlers — grab the preloaded cover image
-  // from the <link rel="preload" as="image"> tag which is always present.
-  const preloadMatch = html.match(/<link[^>]+rel="preload"[^>]+as="image"[^>]+href="([^"]+)"/i)
-    ?? html.match(/<link[^>]+href="([^"]+)"[^>]+rel="preload"[^>]+as="image"/i);
-  const rawThumbnail = preloadMatch ? preloadMatch[1] : '';
   // TikTok CDN URLs are IP-signed — fetch and embed as a data URI so the
   // mobile app can load it regardless of egress IP.
+  // Try multiple strategies in order of reliability:
+  //   1. og:image meta tag
+  //   2. "originCover" in embedded JSON (highest quality, no watermark)
+  //   3. "cover" in embedded JSON
+  //   4. <link rel="preload" as="image"> tag
+  let rawThumbnail = '';
+
+  const ogImage = extractOgMeta(html, 'og:image');
+  if (ogImage) {
+    rawThumbnail = ogImage;
+    console.log('[Thumbnail] Source: og:image');
+  }
+
+  if (!rawThumbnail) {
+    const originCoverMatch = html.match(/"originCover"\s*:\s*"(https?:[^"]+)"/);
+    if (originCoverMatch) {
+      rawThumbnail = JSON.parse('"' + originCoverMatch[1] + '"');
+      console.log('[Thumbnail] Source: originCover JSON');
+    }
+  }
+
+  if (!rawThumbnail) {
+    // "cover" is common but also matches unrelated fields — anchor to video object
+    const coverMatch = html.match(/"video"\s*:\s*\{[^}]{0,300}"cover"\s*:\s*"(https?:[^"]+)"/)
+      ?? html.match(/"cover"\s*:\s*"(https?:\/\/[^"]+\.(?:jpeg|jpg|png|webp)[^"]*)"/i);
+    if (coverMatch) {
+      rawThumbnail = JSON.parse('"' + coverMatch[1] + '"');
+      console.log('[Thumbnail] Source: cover JSON');
+    }
+  }
+
+  if (!rawThumbnail) {
+    const preloadMatch = html.match(/<link[^>]+rel="preload"[^>]+as="image"[^>]+href="([^"]+)"/i)
+      ?? html.match(/<link[^>]+href="([^"]+)"[^>]+rel="preload"[^>]+as="image"/i);
+    if (preloadMatch) {
+      rawThumbnail = preloadMatch[1];
+      console.log('[Thumbnail] Source: preload link');
+    }
+  }
+
+  if (!rawThumbnail) {
+    console.log('[Thumbnail] No thumbnail URL found in TikTok page — tried og:image, originCover, cover, preload link');
+  }
+
   const thumbnail = await fetchThumbnailAsDataUrl(rawThumbnail);
 
   const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
