@@ -96,16 +96,39 @@ async function extractCaptionFromInstagramPage(url) {
     clearTimeout(tid);
   }
 
-  let caption = extractOgMeta(html, 'og:description');
-  if (!caption) throw new Error('No og:description found in Instagram page HTML');
+  // Instagram puts the FULL post caption in og:title formatted as:
+  //   "Author Name on Instagram: "Full caption text…""
+  // og:description is a truncated version prefixed with like/comment counts
+  // so og:title is always preferred as the caption source.
+  const ogTitle = extractOgMeta(html, 'og:title');
+  const ogDesc = extractOgMeta(html, 'og:description');
 
-  // Instagram formats og:description as:
-  //   "123 likes, 45 comments - Username on Instagram: "Caption…""
-  // Strip everything up to and including the first colon + quote.
-  caption = caption.replace(/^[^:]+:\s*["""«]?/, '').replace(/["""»]?\s*$/, '').trim();
+  let caption = '';
+
+  if (ogTitle) {
+    // Strip "Author on Instagram: " or "Author on Instagram Reels: " prefix + surrounding quotes
+    caption = ogTitle
+      .replace(/^.+?\bon\s+instagram(?:\s+reels)?:\s*/i, '')
+      .replace(/^["""«]/, '')
+      .replace(/["""»]$/, '')
+      .trim();
+  }
+
+  // Fall back to og:description if og:title didn't yield anything useful
+  if (!caption && ogDesc) {
+    caption = ogDesc
+      .replace(/^[^:]+:\s*["""«]?/, '')
+      .replace(/["""»]?\s*$/, '')
+      .trim();
+  }
+
+  if (!caption) throw new Error('No usable caption found in Instagram page HTML');
 
   const thumbnail = extractOgMeta(html, 'og:image');
-  const title = extractOgMeta(html, 'og:title');
+
+  // Derive a clean title from the first non-empty line of the caption
+  const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
+  const title = firstLine.slice(0, 100).trim();
 
   return { caption, title, thumbnail, uploader: '' };
 }
