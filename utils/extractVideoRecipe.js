@@ -188,11 +188,70 @@ function isInstagramUrl(url) {
   }
 }
 
+function isTikTokUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'tiktok.com' || host === 'www.tiktok.com' || host === 'vm.tiktok.com';
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// TikTok HTML caption extraction (primary path — avoids yt-dlp bot blocks)
+//
+// TikTok embeds the full post caption in a "desc" JSON field inside the
+// page HTML.  We extract it with a simple regex — no auth needed for public
+// videos.  Short URLs (vm.tiktok.com) are followed transparently.
+// ---------------------------------------------------------------------------
+
+async function extractCaptionFromTikTokPage(url) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), IG_FETCH_TIMEOUT_MS);
+  let html;
+  try {
+    const resp = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': MOBILE_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      redirect: 'follow',
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    html = await resp.text();
+  } finally {
+    clearTimeout(tid);
+  }
+
+  // TikTok embeds post data in inline JSON as "desc":"<caption text>"
+  // The caption contains \uXXXX escapes so JSON.parse handles unicode correctly.
+  const descMatch = html.match(/"desc"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!descMatch) throw new Error('No "desc" field found in TikTok page HTML');
+
+  // JSON-unescape the captured string (handles \u0026, \u002F, emoji escapes, etc.)
+  let caption;
+  try {
+    caption = JSON.parse('"' + descMatch[1] + '"');
+  } catch {
+    caption = descMatch[1]; // use raw if unescape fails
+  }
+  caption = caption.trim();
+  if (!caption) throw new Error('TikTok "desc" field was empty');
+
+  const thumbnail = extractOgMeta(html, 'og:image');
+  const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
+  const title = firstLine.slice(0, 100).trim();
+
+  return { caption, title, thumbnail, uploader: '' };
+}
+
 /**
  * Extracts caption + metadata from a social video URL.
- * - Instagram: tries HTML page scrape first (no auth needed for public posts),
- *              falls back to yt-dlp if the page scrape fails.
- * - TikTok / YouTube: uses yt-dlp directly.
+ * - Instagram: HTML scrape (og:title) first → yt-dlp fallback
+ * - TikTok:    HTML scrape (og:description) first → yt-dlp fallback
+ * - YouTube:   yt-dlp directly
  *
  * @param {string} videoUrl
  * @returns {Promise<{ caption: string, title: string, thumbnail: string, uploader: string }>}
@@ -208,11 +267,23 @@ export async function extractCaptionFromVideoUrl(videoUrl) {
     } catch (err) {
       console.warn('[VideoImport] Instagram HTML scrape failed, trying yt-dlp:', err.message);
     }
-    // Fall back to yt-dlp (e.g. for private stories or if the scrape returned nothing)
     return extractCaptionViaYtDlp(videoUrl);
   }
 
-  // TikTok, YouTube, etc.
+  if (isTikTokUrl(videoUrl)) {
+    try {
+      const result = await extractCaptionFromTikTokPage(videoUrl);
+      if (result.caption) {
+        console.log('[VideoImport] TikTok caption retrieved via HTML scrape');
+        return result;
+      }
+    } catch (err) {
+      console.warn('[VideoImport] TikTok HTML scrape failed, trying yt-dlp:', err.message);
+    }
+    return extractCaptionViaYtDlp(videoUrl);
+  }
+
+  // YouTube, etc.
   return extractCaptionViaYtDlp(videoUrl);
 }
 
