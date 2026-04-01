@@ -49,6 +49,8 @@ export function isSocialVideoUrl(url) {
 // image as a base64 data URI at import time solves this permanently.
 // ---------------------------------------------------------------------------
 
+const MAX_THUMBNAIL_BYTES = 400_000; // ~300 KB raw keeps base64 under 400 KB — safe for Firestore
+
 async function fetchThumbnailAsDataUrl(url) {
   if (!url) return '';
   try {
@@ -60,6 +62,10 @@ async function fetchThumbnailAsDataUrl(url) {
     const contentType = res.headers.get('content-type') || 'image/jpeg';
     const mimeType = contentType.split(';')[0].trim();
     const buffer = await res.arrayBuffer();
+    if (buffer.byteLength > MAX_THUMBNAIL_BYTES) {
+      console.warn(`[Thumbnail] Skipping oversized image: ${buffer.byteLength} bytes`);
+      return '';
+    }
     const base64 = Buffer.from(buffer).toString('base64');
     return `data:${mimeType};base64,${base64}`;
   } catch {
