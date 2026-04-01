@@ -43,6 +43,31 @@ export function isSocialVideoUrl(url) {
 }
 
 // ---------------------------------------------------------------------------
+// Thumbnail fetch helper — downloads a thumbnail URL and returns a data URI.
+// TikTok CDN URLs are IP-signed: the mobile app cannot load them directly
+// because the signature was issued for the server's egress IP. Embedding the
+// image as a base64 data URI at import time solves this permanently.
+// ---------------------------------------------------------------------------
+
+async function fetchThumbnailAsDataUrl(url) {
+  if (!url) return '';
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RecipeBot/1.0)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return '';
+    const contentType = res.headers.get('content-type') || 'image/jpeg';
+    const mimeType = contentType.split(';')[0].trim();
+    const buffer = await res.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    return `data:${mimeType};base64,${base64}`;
+  } catch {
+    return '';
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Instagram HTML caption extraction (primary path for Instagram URLs)
 //
 // For public Instagram posts the og:description meta tag contains the full
@@ -124,7 +149,8 @@ async function extractCaptionFromInstagramPage(url) {
 
   if (!caption) throw new Error('No usable caption found in Instagram page HTML');
 
-  const thumbnail = extractOgMeta(html, 'og:image');
+  const rawThumbnail = extractOgMeta(html, 'og:image');
+  const thumbnail = await fetchThumbnailAsDataUrl(rawThumbnail);
 
   // Derive a clean title from the first non-empty line of the caption
   const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
@@ -244,7 +270,10 @@ async function extractCaptionFromTikTokPage(url) {
   // from the <link rel="preload" as="image"> tag which is always present.
   const preloadMatch = html.match(/<link[^>]+rel="preload"[^>]+as="image"[^>]+href="([^"]+)"/i)
     ?? html.match(/<link[^>]+href="([^"]+)"[^>]+rel="preload"[^>]+as="image"/i);
-  const thumbnail = preloadMatch ? preloadMatch[1] : '';
+  const rawThumbnail = preloadMatch ? preloadMatch[1] : '';
+  // TikTok CDN URLs are IP-signed — fetch and embed as a data URI so the
+  // mobile app can load it regardless of egress IP.
+  const thumbnail = await fetchThumbnailAsDataUrl(rawThumbnail);
 
   const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
   const title = firstLine.slice(0, 100).trim();
