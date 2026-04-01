@@ -276,7 +276,11 @@ export async function parseCaptionWithLLM(captionText) {
   try {
     const model = getGenAI().getGenerativeModel({
       model: 'gemini-2.5-flash',
-      generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 8192,
+        responseMimeType: 'application/json',
+      },
     });
     const result = await model.generateContent(
       SYSTEM_PROMPT + '\n\nCaption text:\n' + captionText.slice(0, 8000),
@@ -289,11 +293,14 @@ export async function parseCaptionWithLLM(captionText) {
 
   let parsed;
   try {
-    // Strip any accidental markdown code fences the model might add
-    const clean = responseText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    // Strip markdown code fences in case the model ignores responseMimeType
+    const clean = responseText
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
     parsed = JSON.parse(clean);
   } catch {
-    console.error('[VideoImport] LLM returned non-JSON:', responseText.slice(0, 200));
+    console.error('[VideoImport] LLM returned non-JSON:', responseText.slice(0, 300));
     return null;
   }
 
