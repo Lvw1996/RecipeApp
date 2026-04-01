@@ -145,7 +145,7 @@ export async function parseCaptionWithLLM(captionText) {
   let responseText;
   try {
     const model = getGenAI().getGenerativeModel({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.0-flash-lite',
       generationConfig: { temperature: 0, maxOutputTokens: 2048 },
     });
     const result = await model.generateContent(
