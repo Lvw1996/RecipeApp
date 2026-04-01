@@ -1,10 +1,14 @@
 // utils/extractVideoRecipe.js
 //
-// Extracts recipe data from social video URLs (TikTok, Instagram, YouTube) by:
-//   1. Using yt-dlp to extract the video caption / description
-//   2. Sending the caption to Gemini 2.0 Flash to parse it into structured recipe JSON
+// Extracts recipe data from social video URLs (TikTok, Instagram, YouTube).
 //
-// The returned recipe shape matches what extractRecipe.js produces so the
+// Caption extraction strategy (recipe is always in the caption, not the audio):
+//   - Instagram: HTML page scrape (og:description) first — works on public posts
+//                without authentication. Falls back to yt-dlp if the scrape fails.
+//   - TikTok / YouTube: yt-dlp --dump-json (metadata only, no video download).
+//
+// Once the caption is obtained it is sent to Gemini 2.0 Flash to parse it into
+// structured recipe JSON.  The returned shape matches extractRecipe.js so the
 // existing /import response handling on the app side works unchanged.
 
 import { execFile } from 'node:child_process';
@@ -39,19 +43,80 @@ export function isSocialVideoUrl(url) {
 }
 
 // ---------------------------------------------------------------------------
-// yt-dlp caption extraction
+// Instagram HTML caption extraction (primary path for Instagram URLs)
+//
+// For public Instagram posts the og:description meta tag contains the full
+// caption text without needing authentication.  This is faster than yt-dlp
+// and avoids Instagram's API login requirements.
+// ---------------------------------------------------------------------------
+
+const IG_FETCH_TIMEOUT_MS = 12000;
+const MOBILE_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+
+function decodeHtmlEntities(str) {
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)));
+}
+
+function extractOgMeta(html, property) {
+  const re = new RegExp(
+    `<meta[^>]+property=["']${property}["'][^>]+content=["']([^"']+)["']|` +
+    `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${property}["']`,
+    'i',
+  );
+  const m = html.match(re);
+  return m ? decodeHtmlEntities(m[1] || m[2] || '') : '';
+}
+
+async function extractCaptionFromInstagramPage(url) {
+  const controller = new AbortController();
+  const tid = setTimeout(() => controller.abort(), IG_FETCH_TIMEOUT_MS);
+  let html;
+  try {
+    const resp = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': MOBILE_UA,
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+      redirect: 'follow',
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    html = await resp.text();
+  } finally {
+    clearTimeout(tid);
+  }
+
+  let caption = extractOgMeta(html, 'og:description');
+  if (!caption) throw new Error('No og:description found in Instagram page HTML');
+
+  // Instagram formats og:description as:
+  //   "123 likes, 45 comments - Username on Instagram: "Caption…""
+  // Strip everything up to and including the first colon + quote.
+  caption = caption.replace(/^[^:]+:\s*["""«]?/, '').replace(/["""»]?\s*$/, '').trim();
+
+  const thumbnail = extractOgMeta(html, 'og:image');
+  const title = extractOgMeta(html, 'og:title');
+
+  return { caption, title, thumbnail, uploader: '' };
+}
+
+// ---------------------------------------------------------------------------
+// yt-dlp caption extraction (primary path for TikTok / YouTube)
 // ---------------------------------------------------------------------------
 
 const YTDLP_TIMEOUT_MS = 30000;
 
-/**
- * Uses yt-dlp to fetch video metadata (no download) and returns the caption
- * text, thumbnail URL, title, and uploader name.
- *
- * @param {string} videoUrl
- * @returns {Promise<{ caption: string, title: string, thumbnail: string, uploader: string }>}
- */
-export async function extractCaptionFromVideoUrl(videoUrl) {
+async function extractCaptionViaYtDlp(videoUrl) {
   let stdout;
   try {
     const result = await execFileAsync(
@@ -60,12 +125,10 @@ export async function extractCaptionFromVideoUrl(videoUrl) {
         '--dump-json',
         '--no-download',
         '--no-playlist',
-        // Use a realistic browser UA to reduce bot detection
-        '--user-agent',
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+        '--user-agent', MOBILE_UA,
         videoUrl,
       ],
-      { timeout: YTDLP_TIMEOUT_MS }
+      { timeout: YTDLP_TIMEOUT_MS },
     );
     stdout = result.stdout;
   } catch (err) {
@@ -81,13 +144,53 @@ export async function extractCaptionFromVideoUrl(videoUrl) {
     throw new Error('yt-dlp returned unparseable output.');
   }
 
-  // yt-dlp stores the caption / post body in the "description" field.
   const caption = String(data.description || data.title || '').trim();
   const title = String(data.title || '').trim();
   const thumbnail = String(data.thumbnail || '').trim();
   const uploader = String(data.uploader || data.channel || '').trim();
 
   return { caption, title, thumbnail, uploader };
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point — routes to the best extraction method per platform
+// ---------------------------------------------------------------------------
+
+function isInstagramUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'instagram.com' || host === 'www.instagram.com';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Extracts caption + metadata from a social video URL.
+ * - Instagram: tries HTML page scrape first (no auth needed for public posts),
+ *              falls back to yt-dlp if the page scrape fails.
+ * - TikTok / YouTube: uses yt-dlp directly.
+ *
+ * @param {string} videoUrl
+ * @returns {Promise<{ caption: string, title: string, thumbnail: string, uploader: string }>}
+ */
+export async function extractCaptionFromVideoUrl(videoUrl) {
+  if (isInstagramUrl(videoUrl)) {
+    try {
+      const result = await extractCaptionFromInstagramPage(videoUrl);
+      if (result.caption) {
+        console.log('[VideoImport] Instagram caption retrieved via HTML scrape');
+        return result;
+      }
+    } catch (err) {
+      console.warn('[VideoImport] Instagram HTML scrape failed, trying yt-dlp:', err.message);
+    }
+    // Fall back to yt-dlp (e.g. for private stories or if the scrape returned nothing)
+    return extractCaptionViaYtDlp(videoUrl);
+  }
+
+  // TikTok, YouTube, etc.
+  return extractCaptionViaYtDlp(videoUrl);
 }
 
 // ---------------------------------------------------------------------------
