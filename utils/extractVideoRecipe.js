@@ -240,7 +240,12 @@ async function extractCaptionFromTikTokPage(url) {
   caption = caption.trim();
   if (!caption) throw new Error('TikTok "desc" field was empty');
 
-  const thumbnail = extractOgMeta(html, 'og:image');
+  // TikTok doesn't serve og:image to crawlers — grab the preloaded cover image
+  // from the <link rel="preload" as="image"> tag which is always present.
+  const preloadMatch = html.match(/<link[^>]+rel="preload"[^>]+as="image"[^>]+href="([^"]+)"/i)
+    ?? html.match(/<link[^>]+href="([^"]+)"[^>]+rel="preload"[^>]+as="image"/i);
+  const thumbnail = preloadMatch ? preloadMatch[1] : '';
+
   const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
   const title = firstLine.slice(0, 100).trim();
 
