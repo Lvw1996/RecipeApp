@@ -171,7 +171,8 @@ app.post('/import-video', requireAuth, videoLimiter, async (req, res) => {
     recipe.title = recipe.title || title || `Recipe by ${uploader}`;
     recipe.importUrl = url;
 
-    console.log('[VideoImport] ✅ Recipe parsed:', recipe.title, '| ingredients:', recipe.ingredients?.length);
+    const thumbType = recipe.thumbnail?.startsWith('data:') ? `base64(${recipe.thumbnail.length} chars)` : (recipe.thumbnail ? `url(${recipe.thumbnail.slice(0, 80)})` : 'NONE');
+    console.log('[VideoImport] ✅ Recipe parsed:', recipe.title, '| ingredients:', recipe.ingredients?.length, '| thumbnail:', thumbType);
     return res.json(recipe);
 
   } catch (err) {

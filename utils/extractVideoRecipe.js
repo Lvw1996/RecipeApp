@@ -52,23 +52,31 @@ export function isSocialVideoUrl(url) {
 const MAX_THUMBNAIL_BYTES = 400_000; // ~300 KB raw keeps base64 under 400 KB — safe for Firestore
 
 async function fetchThumbnailAsDataUrl(url) {
-  if (!url) return '';
+  if (!url) {
+    console.log('[Thumbnail] No URL provided — skipping');
+    return '';
+  }
+  console.log('[Thumbnail] Fetching:', url.slice(0, 120));
   try {
     const res = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RecipeBot/1.0)' },
       signal: AbortSignal.timeout(8000),
     });
+    console.log('[Thumbnail] HTTP status:', res.status, res.statusText);
     if (!res.ok) return '';
     const contentType = res.headers.get('content-type') || 'image/jpeg';
     const mimeType = contentType.split(';')[0].trim();
     const buffer = await res.arrayBuffer();
+    console.log('[Thumbnail] Fetched bytes:', buffer.byteLength, 'mime:', mimeType);
     if (buffer.byteLength > MAX_THUMBNAIL_BYTES) {
-      console.warn(`[Thumbnail] Skipping oversized image: ${buffer.byteLength} bytes`);
+      console.warn('[Thumbnail] Skipping oversized image:', buffer.byteLength, 'bytes');
       return '';
     }
     const base64 = Buffer.from(buffer).toString('base64');
+    console.log('[Thumbnail] base64 length:', base64.length);
     return `data:${mimeType};base64,${base64}`;
-  } catch {
+  } catch (err) {
+    console.error('[Thumbnail] Fetch error:', err.message);
     return '';
   }
 }
