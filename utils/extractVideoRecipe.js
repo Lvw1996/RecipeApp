@@ -2,18 +2,29 @@
 //
 // Extracts recipe data from social video URLs (TikTok, Instagram, YouTube).
 //
-// Caption extraction strategy (recipe is always in the caption, not the audio):
-//   - Instagram: HTML page scrape (og:description) first — works on public posts
-//                without authentication. Falls back to yt-dlp if the scrape fails.
-//   - TikTok / YouTube: yt-dlp --dump-json (metadata only, no video download).
+// Extraction strategy (two-pass: caption → audio fallback):
+//   Pass 1 — Caption text:
+//     Instagram: HTML page scrape (og:title) first → yt-dlp --dump-json fallback.
+//     TikTok:    HTML scrape (og:description) first → yt-dlp --dump-json fallback.
+//     YouTube:   yt-dlp --dump-json directly.
+//     Caption is sent to Gemini 2.0 Flash to parse into structured recipe JSON.
 //
-// Once the caption is obtained it is sent to Gemini 2.0 Flash to parse it into
-// structured recipe JSON.  The returned shape matches extractRecipe.js so the
-// existing /import response handling on the app side works unchanged.
+//   Pass 2 — Audio transcription (triggered when caption yields no recipe):
+//     yt-dlp downloads the audio stream to a temp file (no ffmpeg conversion needed).
+//     The file is uploaded to Gemini Files API and Gemini extracts the recipe
+//     directly from the audio — handles creators who speak the recipe aloud
+//     rather than writing it in the post caption.
+//
+// The returned shape matches extractRecipe.js so the existing /import response
+// handling on the app side works unchanged.
 
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { promises as fs } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleAIFileManager } from '@google/generative-ai/server';
 
 const execFileAsync = promisify(execFile);
 
@@ -378,12 +389,18 @@ export async function extractCaptionFromVideoUrl(videoUrl) {
 // Gemini 2.0 Flash recipe parser
 // ---------------------------------------------------------------------------
 
-// Client is created lazily so the server can start without crashing when
+// Clients are created lazily so the server can start without crashing when
 // GEMINI_API_KEY has not been set yet.
 let _genai = null;
 function getGenAI() {
   if (!_genai) _genai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
   return _genai;
+}
+
+let _fileManager = null;
+function getFileManager() {
+  if (!_fileManager) _fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
+  return _fileManager;
 }
 
 const SYSTEM_PROMPT = `You are a recipe extraction assistant. The user will give you the caption or description text from a social media cooking video (TikTok or Instagram). Your job is to extract a structured recipe from that text if one exists.
@@ -416,6 +433,207 @@ Rules:
 - Keep ingredient names clean — no quantities in the name field.
 - Instructions should be separate steps. If the text has no clear steps, infer logical steps from the ingredient list.
 - Output English regardless of the input language.`;
+
+// ---------------------------------------------------------------------------
+// Audio transcription fallback — Gemini Files API
+// ---------------------------------------------------------------------------
+
+const YTDLP_AUDIO_TIMEOUT_MS = 90_000; // 90s — download can be slow on cold starts
+
+// Extension → MIME type for Gemini Files API
+const AUDIO_MIME_MAP = {
+  m4a:  'audio/mp4',
+  mp4:  'video/mp4',
+  webm: 'video/webm',
+  opus: 'audio/ogg',
+  ogg:  'audio/ogg',
+  aac:  'audio/aac',
+  mp3:  'audio/mpeg',
+  wav:  'audio/wav',
+  flac: 'audio/flac',
+};
+
+const AUDIO_RECIPE_PROMPT = `You are a recipe extraction assistant. The audio you are given is from a cooking video — the host speaks the recipe aloud, listing ingredients and method steps.
+
+Extract the recipe from the spoken content.
+
+Output ONLY valid JSON matching this exact schema (no markdown, no explanation):
+{
+  "found": true | false,
+  "title": "string — recipe name",
+  "servings": number | null,
+  "prepTime": number | null,
+  "cookTime": number | null,
+  "cuisine": "string | null",
+  "tags": ["string"],
+  "ingredients": [
+    {
+      "name": "string — ingredient name only, no quantity",
+      "quantity": number | null,
+      "unit": "string — e.g. g, ml, cup, tbsp, tsp, oz, lb, kg, pcs — or empty string",
+      "prepNote": "string — e.g. diced, softened — or empty string"
+    }
+  ],
+  "instructions": ["string — one step per element"],
+  "notes": "string | null"
+}
+
+Rules:
+- If no recipe is present in the audio, return { "found": false } and nothing else.
+- Quantities must be numbers (convert fractions: ½ → 0.5, ¼ → 0.25).
+- Split compound ingredients onto separate lines ("salt and pepper" → two items).
+- Keep ingredient names clean — no quantities in the name field.
+- Instructions should be separate steps.
+- Output English regardless of the input language.`;
+
+/**
+ * Downloads the audio from a social video URL using yt-dlp, uploads it to
+ * the Gemini Files API, and asks Gemini to extract a structured recipe from
+ * the spoken content.
+ *
+ * Used as a fallback when the post caption contains no recipe — i.e. the
+ * creator speaks the recipe aloud in the video rather than writing it in
+ * the post description.
+ *
+ * @param {string} videoUrl
+ * @param {string} [fallbackThumbnail]  Thumbnail already obtained from the caption path
+ * @returns {Promise<object | null>}  ImportedRecipe-shaped object, or null
+ */
+export async function extractRecipeFromAudio(videoUrl, fallbackThumbnail = '') {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY is not set.');
+  }
+
+  const tmpBase = join(tmpdir(), `recipe-audio-${Date.now()}`);
+  let tmpPath = null;
+
+  // ── Step 1: Download audio stream via yt-dlp ──────────────────────────────
+  console.log('[AudioImport] Downloading audio from:', videoUrl.slice(0, 80));
+  try {
+    await execFileAsync(
+      'yt-dlp',
+      [
+        '-f', 'bestaudio[ext=m4a]/bestaudio/best',
+        '-o', `${tmpBase}.%(ext)s`,
+        '--no-playlist',
+        '--user-agent', MOBILE_UA,
+        videoUrl,
+      ],
+      { timeout: YTDLP_AUDIO_TIMEOUT_MS },
+    );
+  } catch (err) {
+    const msg = String(err?.message || err?.stderr || '');
+    console.error('[AudioImport] yt-dlp download failed:', msg.slice(0, 200));
+    throw new Error('Audio download failed: ' + msg.slice(0, 120));
+  }
+
+  // Find the downloaded file — yt-dlp replaces %(ext)s with the actual extension
+  for (const ext of Object.keys(AUDIO_MIME_MAP)) {
+    const candidate = `${tmpBase}.${ext}`;
+    try {
+      await fs.access(candidate);
+      tmpPath = candidate;
+      break;
+    } catch {
+      // try next extension
+    }
+  }
+
+  if (!tmpPath) {
+    throw new Error('Audio download produced no output file — unknown extension.');
+  }
+
+  const { size } = await fs.stat(tmpPath);
+  console.log('[AudioImport] Downloaded:', tmpPath.split(/[\/\\]/).pop(), `(${(size / 1024).toFixed(0)} KB)`);
+
+  // ── Step 2: Upload to Gemini Files API ────────────────────────────────────
+  const ext = tmpPath.split('.').pop()?.toLowerCase() ?? 'm4a';
+  const mimeType = AUDIO_MIME_MAP[ext] ?? 'audio/mp4';
+
+  let geminiFile;
+  try {
+    const uploadResult = await getFileManager().uploadFile(tmpPath, {
+      mimeType,
+      displayName: 'recipe-audio',
+    });
+    geminiFile = uploadResult.file;
+    console.log('[AudioImport] Uploaded to Gemini Files API:', geminiFile.name, 'state:', geminiFile.state);
+
+    // Wait for ACTIVE state (usually instant for short audio; video takes a few seconds)
+    let attempts = 0;
+    while (geminiFile.state === 'PROCESSING' && attempts < 15) {
+      await new Promise(r => setTimeout(r, 2000));
+      geminiFile = await getFileManager().getFile(geminiFile.name);
+      attempts++;
+    }
+    if (geminiFile.state !== 'ACTIVE') {
+      throw new Error(`Gemini file never became ACTIVE (state: ${geminiFile.state})`);
+    }
+  } finally {
+    // Always delete local temp file regardless of upload success
+    await fs.unlink(tmpPath).catch(() => {});
+  }
+
+  // ── Step 3: Ask Gemini to extract the recipe from the spoken audio ─────────
+  let responseText;
+  try {
+    const model = getGenAI().getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 8192,
+        responseMimeType: 'application/json',
+      },
+    });
+    const result = await model.generateContent([
+      { fileData: { fileUri: geminiFile.uri, mimeType: geminiFile.mimeType } },
+      { text: AUDIO_RECIPE_PROMPT },
+    ]);
+    responseText = result.response.text().trim();
+  } finally {
+    // Delete the uploaded file from Gemini — it auto-expires in 48h but clean up immediately
+    await getFileManager().deleteFile(geminiFile.name).catch(() => {});
+  }
+
+  // ── Step 4: Parse JSON response ────────────────────────────────────────────
+  let parsed;
+  try {
+    const clean = responseText
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```\s*$/i, '')
+      .trim();
+    parsed = JSON.parse(clean);
+  } catch {
+    console.error('[AudioImport] LLM returned non-JSON:', responseText.slice(0, 300));
+    return null;
+  }
+
+  if (!parsed?.found) {
+    console.log('[AudioImport] No recipe found in audio.');
+    return null;
+  }
+
+  console.log('[AudioImport] ✅ Recipe extracted from audio:', parsed.title, '| ingredients:', parsed.ingredients?.length);
+
+  return {
+    title: String(parsed.title || 'Imported Recipe').trim(),
+    thumbnail: fallbackThumbnail || '',
+    prepTime: Number(parsed.prepTime) || 0,
+    cookTime: Number(parsed.cookTime) || 0,
+    servings: Number(parsed.servings) || 1,
+    cuisine: parsed.cuisine || '',
+    tags: Array.isArray(parsed.tags) ? parsed.tags.filter(Boolean) : [],
+    ingredients: (parsed.ingredients || []).map(ing => ({
+      name: String(ing.name || '').trim(),
+      quantity: ing.quantity != null ? Number(ing.quantity) : 1,
+      unit: String(ing.unit || '').trim(),
+      prepNote: String(ing.prepNote || '').trim() || undefined,
+    })).filter(ing => ing.name),
+    instructions: (parsed.instructions || []).map(s => String(s).trim()).filter(Boolean),
+    notes: parsed.notes ? String(parsed.notes).trim() : '',
+    importUrl: '',  // filled in at route level
+  };
+}
 
 /**
  * Sends caption text to Gemini 2.0 Flash and returns a parsed recipe or null.

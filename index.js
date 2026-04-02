@@ -6,6 +6,7 @@ import {
   isSocialVideoUrl,
   extractCaptionFromVideoUrl,
   parseCaptionWithLLM,
+  extractRecipeFromAudio,
 } from './utils/extractVideoRecipe.js';
 import { validateRecipeUrl } from './utils/urlValidator.js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -14,7 +15,7 @@ const app = express();
 app.set('trust proxy', 1); // Railway sits behind a proxy
 const PORT = process.env.PORT || 3000;
 const REQUEST_TIMEOUT_MS = Number(process.env.IMPORT_TIMEOUT_MS || 45000);
-const VIDEO_TIMEOUT_MS = Number(process.env.VIDEO_IMPORT_TIMEOUT_MS || 50000);
+const VIDEO_TIMEOUT_MS = Number(process.env.VIDEO_IMPORT_TIMEOUT_MS || 120000);
 
 // ── CORS ───────────────────────────────────────────────────────────────────
 // Mobile clients (iOS/Android) do not send an Origin header, so traditional
@@ -104,8 +105,11 @@ app.post('/import', requireAuth, standardLimiter, async (req, res) => {
 // ── POST /import-video — TikTok / Instagram caption-based recipe import ────
 //
 // Flow:
-//   1. yt-dlp extracts caption + metadata (no video download)
-//   2. GPT-4o mini parses caption → structured recipe JSON
+//   1. Caption extraction: HTML scrape (Instagram/TikTok) or yt-dlp --dump-json
+//   2. Gemini parses caption text → structured recipe JSON
+//   3. Audio fallback (if caption yields no recipe): yt-dlp downloads audio,
+//      uploaded to Gemini Files API, Gemini extracts recipe from spoken content.
+//      This handles creators who speak the recipe aloud in the video.
 //
 // Responses:
 //   200 { ...recipe }               — recipe found and parsed
@@ -143,27 +147,42 @@ app.post('/import-video', requireAuth, videoLimiter, async (req, res) => {
 
     const { caption, title, thumbnail, uploader } = captionData;
 
-    if (!caption) {
+    // Step 2: parse caption text with Gemini
+    let recipe = null;
+    if (caption) {
+      try {
+        recipe = await parseCaptionWithLLM(caption);
+      } catch (err) {
+        console.error('[VideoImport] LLM error:', err.message);
+        return res.status(500).json({ error: err.message });
+      }
+      if (timedOut.value) {
+        return res.status(504).json({ error: 'Video import timed out during recipe parsing' });
+      }
+    } else {
       console.log('[VideoImport] No caption found for:', url);
-      return res.json({ error: 'no_caption', caption: '' });
     }
 
-    // Step 2: parse caption with GPT-4o mini
-    let recipe;
-    try {
-      recipe = await parseCaptionWithLLM(caption);
-    } catch (err) {
-      console.error('[VideoImport] LLM error:', err.message);
-      return res.status(500).json({ error: err.message });
-    }
-
-    if (timedOut.value) {
-      return res.status(504).json({ error: 'Video import timed out during recipe parsing' });
+    // Step 3: Audio fallback — triggered when caption was empty or contained no recipe.
+    // Downloads the audio track and lets Gemini extract the recipe from spoken content.
+    if (!recipe) {
+      const reason = caption ? 'caption had no recipe' : 'no caption';
+      console.log(`[VideoImport] ${reason} — attempting audio transcription fallback for:`, url);
+      try {
+        recipe = await extractRecipeFromAudio(url, thumbnail);
+      } catch (audioErr) {
+        console.warn('[VideoImport] Audio fallback failed:', audioErr.message);
+      }
+      if (timedOut.value) {
+        return res.status(504).json({ error: 'Video import timed out during audio extraction' });
+      }
     }
 
     if (!recipe) {
-      console.log('[VideoImport] LLM found no recipe in caption for:', url);
-      return res.json({ error: 'no_recipe', caption });
+      // Both caption and audio paths found nothing — return the caption so the
+      // user can edit it manually in the app.
+      console.log('[VideoImport] No recipe found via caption or audio for:', url);
+      return res.json({ error: caption ? 'no_recipe' : 'no_caption', caption: caption || '' });
     }
 
     // Merge in metadata yt-dlp provided but the LLM didn't fill
