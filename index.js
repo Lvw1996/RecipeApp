@@ -348,6 +348,116 @@ app.post('/parse-receipt', requireAuth, standardLimiter, async (req, res) => {
   }
 });
 
+// ── POST /parse-recipe-image — Gemini vision recipe → structured recipe ──────
+//
+// Receives a base64-encoded photo of a recipe (cookbook page, recipe card,
+// handwritten note, etc.), passes it to Gemini 2.5 Flash vision, and returns
+// a fully structured recipe ready for the app to preview and save.
+//
+// Request body: { image: "<base64 string>", mimeType: "image/jpeg" | "image/png" }
+// Response 200: { found: true, title, servings, prepTime, cookTime, cuisine,
+//                tags, ingredients, instructions, notes }
+//           OR: { found: false }   — no recipe visible in image
+// Response 400: missing image
+// Response 500: Gemini error
+const RECIPE_IMAGE_PROMPT = `You are a recipe extraction assistant. The image shows a recipe — it may be a cookbook page, recipe card, handwritten note, or magazine cut-out.
+
+Extract the complete recipe from the image.
+
+Output ONLY valid JSON matching this exact schema (no markdown, no explanation):
+{
+  "found": true | false,
+  "title": "string — recipe name",
+  "servings": number | null,
+  "prepTime": number | null,
+  "cookTime": number | null,
+  "cuisine": "string | null",
+  "tags": ["string"],
+  "ingredients": [
+    {
+      "name": "string — ingredient name only, no quantity",
+      "quantity": number | null,
+      "unit": "string — g, ml, cup, tbsp, tsp, oz, lb, kg, pcs — or empty string",
+      "prepNote": "string — e.g. diced, softened — or empty string"
+    }
+  ],
+  "instructions": ["string — one step per element"],
+  "notes": "string | null"
+}
+
+Rules:
+- If no recipe is visible in the image, return { "found": false } and nothing else.
+- Quantities must be numbers. Convert fractions: \u00bd \u2192 0.5, \u00bc \u2192 0.25.
+- Split compound ingredients onto separate lines ("salt and pepper" \u2192 two items).
+- Keep ingredient names clean — no quantities in the name field.
+- prepTime and cookTime must be in minutes.
+- Output English regardless of the language in the image.`;
+
+app.post('/parse-recipe-image', requireAuth, standardLimiter, async (req, res) => {
+  const { image, mimeType = 'image/jpeg' } = req.body;
+
+  if (!image) {
+    return res.status(400).json({ error: 'No image provided' });
+  }
+
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ error: 'GEMINI_API_KEY is not configured on the server' });
+  }
+
+  try {
+    const model = getReceiptGenAI().getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { temperature: 0, maxOutputTokens: 8192, responseMimeType: 'application/json' },
+    });
+
+    const result = await model.generateContent([
+      { text: RECIPE_IMAGE_PROMPT },
+      { inlineData: { mimeType, data: image } },
+    ]);
+
+    const responseText = result.response.text().trim();
+
+    let parsed;
+    try {
+      const clean = responseText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+      parsed = JSON.parse(clean);
+    } catch {
+      console.error('[ParseRecipeImage] Gemini returned non-JSON:', responseText.slice(0, 200));
+      return res.status(500).json({ error: 'Gemini returned unparseable response' });
+    }
+
+    if (!parsed?.found) {
+      console.log('[ParseRecipeImage] No recipe detected in image.');
+      return res.json({ found: false });
+    }
+
+    // Sanitise / coerce the response so the app always receives a consistent shape
+    const recipe = {
+      found: true,
+      title: String(parsed.title || 'Scanned Recipe').trim(),
+      servings: Number(parsed.servings) || null,
+      prepTime: Number(parsed.prepTime) || null,
+      cookTime: Number(parsed.cookTime) || null,
+      cuisine: parsed.cuisine ? String(parsed.cuisine).trim() : null,
+      tags: Array.isArray(parsed.tags) ? parsed.tags.filter(Boolean) : [],
+      ingredients: (parsed.ingredients || []).map(ing => ({
+        name: String(ing.name || '').trim(),
+        quantity: ing.quantity != null ? Number(ing.quantity) : null,
+        unit: String(ing.unit || '').trim(),
+        prepNote: String(ing.prepNote || '').trim() || undefined,
+      })).filter(ing => ing.name),
+      instructions: (parsed.instructions || []).map(s => String(s).trim()).filter(Boolean),
+      notes: parsed.notes ? String(parsed.notes).trim() : null,
+    };
+
+    console.log('[ParseRecipeImage] \u2705 Parsed recipe:', recipe.title, '| ingredients:', recipe.ingredients.length, '| steps:', recipe.instructions.length);
+    return res.json(recipe);
+  } catch (err) {
+    console.error('[ParseRecipeImage] Error:', err?.message);
+    return res.status(500).json({ error: err?.message || 'Failed to parse recipe image' });
+  }
+});
+
 // ── GET /health — quick liveness check ─────────────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({
