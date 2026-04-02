@@ -3,3 +3,6 @@
 # gcc/gnumake are required to compile native addons used by firebase-admin.
 [phases.setup]
 nixPkgs = ['nodejs_20', 'yt-dlp', 'python3', 'gcc', 'gnumake']
+
+[phases.install]
+cmds = ['npm install']
