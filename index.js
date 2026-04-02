@@ -2,6 +2,9 @@ import express from 'express';
 import bodyParser from 'body-parser';
 import rateLimit from 'express-rate-limit';
 import { extractRecipeFromUrl } from './utils/extractRecipe.js';
+import { generateResetToken, verifyResetToken, consumeResetToken } from './utils/auth-tokens.js';
+import { getAdminAuth } from './utils/firebase-admin.js';
+import { sendPasswordResetEmail } from './utils/email-sender.js';
 import {
   isSocialVideoUrl,
   extractCaptionFromVideoUrl,
@@ -326,6 +329,110 @@ app.post('/parse-receipt', requireAuth, standardLimiter, async (req, res) => {
   } catch (err) {
     console.error('[ParseReceipt] Error:', err?.message);
     return res.status(500).json({ error: err?.message || 'Failed to parse receipt' });
+  }
+});
+
+// ── Password-reset rate limiter (stricter than standard) ─────────────────────
+const resetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min window
+  max: 5,                    // max 5 reset requests per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many reset requests. Please wait 15 minutes and try again.' },
+});
+
+// ── POST /auth/request-reset ──────────────────────────────────────────────────
+// Body: { email: string }
+// Always responds 200 (prevents email enumeration).
+// Sends a reset email only if the account actually exists.
+app.post('/auth/request-reset', resetLimiter, async (req, res) => {
+  const email = (req.body?.email || '').toLowerCase().trim();
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'A valid email address is required.' });
+  }
+
+  try {
+    // Look up the Firebase user — if not found, return 200 silently to prevent enumeration.
+    let uid;
+    try {
+      const user = await getAdminAuth().getUserByEmail(email);
+      uid = user.uid;
+    } catch (err) {
+      if (err.code === 'auth/user-not-found') {
+        console.log(`[PasswordReset] No account for ${email} — returning 200 silently`);
+        return res.json({ ok: true });
+      }
+      throw err;
+    }
+
+    const rawToken = await generateResetToken(email, uid);
+    await sendPasswordResetEmail(email, rawToken);
+
+    console.log(`[PasswordReset] Reset email sent to ${email}`);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[PasswordReset] request-reset error:', err.message);
+    return res.status(500).json({ error: 'Failed to send reset email. Please try again.' });
+  }
+});
+
+// ── GET /auth/verify-reset-token ──────────────────────────────────────────────
+// Query: ?email=&token=
+// Used by the app to check validity before displaying the new-password form.
+app.get('/auth/verify-reset-token', async (req, res) => {
+  const email = (req.query.email || '').toLowerCase().trim();
+  const token = (req.query.token || '').trim();
+
+  if (!email || !token) {
+    return res.status(400).json({ valid: false, reason: 'missing_params' });
+  }
+
+  try {
+    const result = await verifyResetToken(email, token);
+    return res.json(result);
+  } catch (err) {
+    console.error('[PasswordReset] verify-token error:', err.message);
+    return res.status(500).json({ valid: false, reason: 'server_error' });
+  }
+});
+
+// ── POST /auth/reset-password ─────────────────────────────────────────────────
+// Body: { email: string, token: string, newPassword: string }
+// Verifies the token, updates the Firebase password, then consumes the token.
+app.post('/auth/reset-password', resetLimiter, async (req, res) => {
+  const email       = (req.body?.email || '').toLowerCase().trim();
+  const token       = (req.body?.token || '').trim();
+  const newPassword = req.body?.newPassword || '';
+
+  if (!email || !token || !newPassword) {
+    return res.status(400).json({ error: 'email, token and newPassword are required.' });
+  }
+  if (newPassword.length < 6) {
+    return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+  }
+
+  try {
+    const { valid, reason, uid } = await verifyResetToken(email, token);
+
+    if (!valid) {
+      const messages = {
+        expired:   'This reset link has expired. Please request a new one.',
+        used:      'This reset link has already been used. Please request a new one.',
+        not_found: 'Reset link not recognised. Please request a new one.',
+        invalid:   'Reset link is invalid. Please request a new one.',
+      };
+      return res.status(400).json({ error: messages[reason] || 'Invalid reset link.' });
+    }
+
+    await getAdminAuth().updateUser(uid, { password: newPassword });
+    await consumeResetToken(email);
+
+    console.log(`[PasswordReset] Password updated for uid=${uid}`);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[PasswordReset] reset-password error:', err.message);
+    return res.status(500).json({ error: 'Failed to reset password. Please try again.' });
   }
 });
 
