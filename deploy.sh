@@ -7,13 +7,17 @@
 
 set -e
 
-echo "=== Installing dependencies ==="
-npm install --omit=dev
+LOG=deploy.log
+echo "=== Deploy started: $(date) ===" | tee -a $LOG
 
-echo "=== Restarting Node.js application ==="
-# Plesk Node.js apps are managed by Phusion Passenger.
-# Touching restart.txt signals Passenger to reload.
+echo "--- Node version ---" | tee -a $LOG
+node --version 2>&1 | tee -a $LOG
+
+echo "--- npm install ---" | tee -a $LOG
+npm install --omit=dev 2>&1 | tee -a $LOG
+
+echo "--- Restarting app (Passenger) ---" | tee -a $LOG
 mkdir -p tmp
 touch tmp/restart.txt
 
-echo "=== Deploy complete ==="
+echo "=== Deploy complete: $(date) ===" | tee -a $LOG

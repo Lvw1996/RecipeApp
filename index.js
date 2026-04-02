@@ -332,6 +332,19 @@ app.post('/parse-receipt', requireAuth, standardLimiter, async (req, res) => {
   }
 });
 
+// ── GET /health — quick liveness check ─────────────────────────────────────────
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    node: process.version,
+    uptime: Math.floor(process.uptime()),
+    env: process.env.NODE_ENV || 'development',
+    smtpConfigured: !!(process.env.SMTP_HOST && process.env.SMTP_USER),
+    firebaseConfigured: !!process.env.FIREBASE_SERVICE_ACCOUNT,
+    ts: new Date().toISOString(),
+  });
+});
+
 // ── GET /auth/smtp-test — verify SMTP credentials without sending email ────────
 // Remove or restrict this endpoint before going to production.
 app.get('/auth/smtp-test', async (req, res) => {
