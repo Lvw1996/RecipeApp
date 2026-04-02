@@ -387,8 +387,9 @@ Output ONLY valid JSON matching this exact schema (no markdown, no explanation):
 
 Rules:
 - If no recipe is visible in the image, return { "found": false } and nothing else.
-- Quantities must be numbers. Convert fractions: \u00bd \u2192 0.5, \u00bc \u2192 0.25.
-- Split compound ingredients onto separate lines ("salt and pepper" \u2192 two items).
+- Quantities must be numbers. Convert fractions: \u00bd \u2192 0.5, \u00bc \u2192 0.25, \u2153 \u2192 0.333, \u2154 \u2192 0.667, \u00be \u2192 0.75.
+- Split truly separate ingredients onto separate lines ("salt and pepper" \u2192 two items).
+- Do NOT split "X or Y" alternatives — they are the SAME ingredient with a substitution option. Example: "1/3 cup butter or oil" \u2192 ONE item with name "butter", prepNote "or oil". Keep name as the primary/first option.
 - Keep ingredient names clean — no quantities in the name field.
 - prepTime and cookTime must be in minutes.
 - Output English regardless of the language in the image.`;
