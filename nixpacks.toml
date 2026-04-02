@@ -1,4 +1,5 @@
 # nixpacks.toml
 # Installs yt-dlp (and Python, which it requires) alongside Node.js on Railway.
+# gcc/gnumake are required to compile native addons used by firebase-admin.
 [phases.setup]
-nixPkgs = ['nodejs_20', 'yt-dlp', 'python3']
+nixPkgs = ['nodejs_20', 'yt-dlp', 'python3', 'gcc', 'gnumake']
