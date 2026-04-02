@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import https from 'https';
 import {
   MEASURE_UNITS,
   cleanUnit,
@@ -680,19 +681,39 @@ export async function extractRecipeFromUrl(url, options = {}) {
     const response = await axios.get(url, requestConfig);
     html = response.data;
   } catch (error) {
-    // Retry once for transient upstream stalls or socket hiccups.
-    const retryable =
-      error?.code === 'ECONNABORTED' ||
-      error?.code === 'ETIMEDOUT' ||
-      error?.code === 'ECONNRESET' ||
-      /timeout|socket|network/i.test(String(error?.message || ''));
+    // SSL certificate chain errors (e.g. site renewed cert but didn't include the
+    // intermediate CA). Retry once with relaxed verification so recipe content on
+    // sites with an incomplete chain can still be imported. The connection is still
+    // encrypted — we just can't fully verify the chain.
+    const isSslChainError =
+      error?.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' ||
+      error?.code === 'CERT_HAS_EXPIRED' ||
+      error?.code === 'DEPTH_ZERO_SELF_SIGNED_CERT' ||
+      error?.code === 'SELF_SIGNED_CERT_IN_CHAIN';
 
-    if (!retryable || signal?.aborted) {
-      throw error;
+    if (isSslChainError && !signal?.aborted) {
+      console.warn(`⚠️  SSL chain error for ${url} (${error.code}) — retrying with relaxed TLS verification`);
+      const relaxedConfig = {
+        ...requestConfig,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+      };
+      const response = await axios.get(url, relaxedConfig);
+      html = response.data;
+    } else {
+      // Retry once for transient upstream stalls or socket hiccups.
+      const retryable =
+        error?.code === 'ECONNABORTED' ||
+        error?.code === 'ETIMEDOUT' ||
+        error?.code === 'ECONNRESET' ||
+        /timeout|socket|network/i.test(String(error?.message || ''));
+
+      if (!retryable || signal?.aborted) {
+        throw error;
+      }
+
+      const response = await axios.get(url, requestConfig);
+      html = response.data;
     }
-
-    const response = await axios.get(url, requestConfig);
-    html = response.data;
   }
 
   const sharedParsed = parseImportedRecipeFromHtml(html, {
