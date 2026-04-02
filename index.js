@@ -335,7 +335,7 @@ app.post('/parse-receipt', requireAuth, standardLimiter, async (req, res) => {
 // ── GET /auth/smtp-test — verify SMTP credentials without sending email ────────
 // Remove or restrict this endpoint before going to production.
 app.get('/auth/smtp-test', async (req, res) => {
-  const result = await testSmtpConnection();
+  const result = await testSmtpConnection(req.query);
   return res.status(result.ok ? 200 : 500).json(result);
 });
 

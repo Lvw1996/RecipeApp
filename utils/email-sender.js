@@ -11,36 +11,48 @@ import nodemailer from 'nodemailer';
 
 let _transport;
 
-function getTransport() {
-  if (_transport) return _transport;
+function getTransport(overrides = {}) {
+  if (_transport && !Object.keys(overrides).length) return _transport;
 
-  const port   = Number(process.env.SMTP_PORT || 587);
-  const secure = port === 465; // true = SSL; false = STARTTLS upgrade
+  const port   = Number(overrides.port ?? process.env.SMTP_PORT ?? 587);
+  const secure = overrides.secure !== undefined
+    ? overrides.secure === 'true' || overrides.secure === true
+    : port === 465;
 
-  _transport = nodemailer.createTransport({
-    host:   process.env.SMTP_HOST,
+  const transport = nodemailer.createTransport({
+    host:       overrides.host ?? process.env.SMTP_HOST,
     port,
     secure,
+    requireTLS: !secure, // force STARTTLS upgrade on port 587
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
-    // Fail fast if credentials are wrong rather than hanging
-    connectionTimeout: 10_000,
+    tls: {
+      // Accept self-signed / mismatched certs common on shared hosting
+      rejectUnauthorized: false,
+    },
+    connectionTimeout: 15_000,
     greetingTimeout:   10_000,
   });
 
-  return _transport;
+  if (!Object.keys(overrides).length) _transport = transport;
+  return transport;
 }
 
 // ── Diagnostic (call GET /auth/smtp-test to verify connection) ────────────────
-export async function testSmtpConnection() {
-  const t = getTransport();
+export async function testSmtpConnection(overrides = {}) {
+  const t = getTransport(overrides);
   const config = {
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    user: process.env.SMTP_USER,
-    secure: Number(process.env.SMTP_PORT || 587) === 465,
+    host:   overrides.host   ?? process.env.SMTP_HOST,
+    port:   Number(overrides.port ?? process.env.SMTP_PORT ?? 587),
+    user:   process.env.SMTP_USER,
+    secure: overrides.secure !== undefined
+      ? overrides.secure === 'true' || overrides.secure === true
+      : Number(overrides.port ?? process.env.SMTP_PORT ?? 587) === 465,
+    requireTLS: !(overrides.secure !== undefined
+      ? overrides.secure === 'true' || overrides.secure === true
+      : Number(overrides.port ?? process.env.SMTP_PORT ?? 587) === 465),
   };
   try {
     await t.verify();
