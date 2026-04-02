@@ -33,7 +33,22 @@ function getTransport() {
   return _transport;
 }
 
-// ── Email ─────────────────────────────────────────────────────────────────────
+// ── Diagnostic (call GET /auth/smtp-test to verify connection) ────────────────
+export async function testSmtpConnection() {
+  const t = getTransport();
+  const config = {
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 587),
+    user: process.env.SMTP_USER,
+    secure: Number(process.env.SMTP_PORT || 587) === 465,
+  };
+  try {
+    await t.verify();
+    return { ok: true, config };
+  } catch (err) {
+    return { ok: false, error: err.message, config };
+  }
+}
 
 export async function sendPasswordResetEmail(toEmail, rawToken) {
   const from    = process.env.SMTP_FROM || process.env.SMTP_USER;

@@ -4,7 +4,7 @@ import rateLimit from 'express-rate-limit';
 import { extractRecipeFromUrl } from './utils/extractRecipe.js';
 import { generateResetToken, verifyResetToken, consumeResetToken } from './utils/auth-tokens.js';
 import { getAdminAuth } from './utils/firebase-admin.js';
-import { sendPasswordResetEmail } from './utils/email-sender.js';
+import { sendPasswordResetEmail, testSmtpConnection } from './utils/email-sender.js';
 import {
   isSocialVideoUrl,
   extractCaptionFromVideoUrl,
@@ -330,6 +330,13 @@ app.post('/parse-receipt', requireAuth, standardLimiter, async (req, res) => {
     console.error('[ParseReceipt] Error:', err?.message);
     return res.status(500).json({ error: err?.message || 'Failed to parse receipt' });
   }
+});
+
+// ── GET /auth/smtp-test — verify SMTP credentials without sending email ────────
+// Remove or restrict this endpoint before going to production.
+app.get('/auth/smtp-test', async (req, res) => {
+  const result = await testSmtpConnection();
+  return res.status(result.ok ? 200 : 500).json(result);
 });
 
 // ── Password-reset rate limiter (stricter than standard) ─────────────────────
