@@ -647,6 +647,43 @@ async function extractRecipeFromWprmApi(url, options = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// HTML byline extraction — used when JSON-LD lacks an author field
+// ---------------------------------------------------------------------------
+function extractHtmlAuthor($) {
+  // 1. Common semantic selectors used by recipe sites and WordPress themes
+  const selectorCandidates = [
+    '[class*="author-name"]',
+    '[class*="byline"] [class*="name"]',
+    '[class*="byline"]',
+    '[rel="author"]',
+    '[itemprop="author"]',
+    '[class*="recipe-author"]',
+    '[class*="wprm-recipe-author"]',
+    '.author',
+  ];
+  for (const sel of selectorCandidates) {
+    const text = $(sel).first().text().trim();
+    if (text && text.length < 80) {
+      // Strip leading "by", "by:", "recipe by" prefix (case-insensitive)
+      return text.replace(/^(recipe\s+by|by)\s*:?\s*/i, '').trim();
+    }
+  }
+
+  // 2. Plain-text "By: Name" / "By Name" pattern anywhere in the page
+  const pageText = $('body').text();
+  const bylineMatch = pageText.match(/\bby\s*:\s*([A-Z][^\n\r,|]{2,50})/i);
+  if (bylineMatch) {
+    const candidate = bylineMatch[1].trim();
+    // Reject if it looks like a sentence (contains a verb indicator or is very long)
+    if (candidate.length < 60 && !/\b(and|or|is|are|was|the|a|an)\b/i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  return '';
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 export async function extractRecipeFromUrl(url, options = {}) {
@@ -834,9 +871,22 @@ export async function extractRecipeFromUrl(url, options = {}) {
       pageText,
     });
 
+    // Extract author — Schema.org `author` can be a string, {name:""}, or an array
+    const rawAuthor = recipeNode.author;
+    let extractedAuthor = '';
+    if (typeof rawAuthor === 'string') {
+      extractedAuthor = rawAuthor.trim();
+    } else if (rawAuthor && typeof rawAuthor === 'object') {
+      const first = Array.isArray(rawAuthor) ? rawAuthor[0] : rawAuthor;
+      extractedAuthor = String(first?.name || first?.['@value'] || '').trim();
+    }
+    // Fall back to HTML byline when JSON-LD has no author
+    if (!extractedAuthor) extractedAuthor = extractHtmlAuthor($);
+
     const jsonLdRecipe = {
       ...parsed,
       ...inferredMeta,
+      ...(extractedAuthor ? { author: extractedAuthor } : {}),
       difficulty: deriveRecipeDifficulty(parsed, [
         recipeNode?.difficulty,
         recipeNode?.recipeCategory,
@@ -903,13 +953,19 @@ export async function extractRecipeFromUrl(url, options = {}) {
 
   selectorFallbackRecipe.difficulty = deriveRecipeDifficulty(selectorFallbackRecipe, [fallbackTitle, htmlNotes]);
 
+  const htmlAuthor = extractHtmlAuthor($);
+
   const selectedFallback = (htmlSectionRecipe.ingredients || []).length > (selectorFallbackRecipe.ingredients || []).length
     ? htmlSectionRecipe
     : selectorFallbackRecipe;
 
-  return applySubRecipeLinks(chooseBestParsedRecipe(selectedFallback, sharedParsed, {
-    title: fallbackTitle,
-    thumbnail: fallbackThumbnail,
-    difficultyHints: [fallbackTitle, htmlNotes],
-  }));
+  return applySubRecipeLinks(chooseBestParsedRecipe(
+    htmlAuthor ? { ...selectedFallback, author: htmlAuthor } : selectedFallback,
+    sharedParsed,
+    {
+      title: fallbackTitle,
+      thumbnail: fallbackThumbnail,
+      difficultyHints: [fallbackTitle, htmlNotes],
+    }
+  ));
 }
