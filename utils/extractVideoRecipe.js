@@ -154,8 +154,14 @@ async function extractCaptionFromInstagramPage(url) {
   const ogDesc = extractOgMeta(html, 'og:description');
 
   let caption = '';
+  let uploader = '';
 
   if (ogTitle) {
+    // og:title format: "Author Name on Instagram: \"Full caption text…\""
+    // Extract the author before stripping the prefix
+    const authorMatch = ogTitle.match(/^(.+?)\s+on\s+instagram(?:\s+reels)?:/i);
+    if (authorMatch) uploader = authorMatch[1].trim();
+
     // Strip "Author on Instagram: " or "Author on Instagram Reels: " prefix + surrounding quotes
     caption = ogTitle
       .replace(/^.+?\bon\s+instagram(?:\s+reels)?:\s*/i, '')
@@ -177,15 +183,11 @@ async function extractCaptionFromInstagramPage(url) {
   const rawThumbnail = extractOgMeta(html, 'og:image');
   const thumbnail = await fetchThumbnailAsDataUrl(rawThumbnail);
 
-  // Derive a clean title from the first non-empty line of the caption
   const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
   const title = firstLine.slice(0, 100).trim();
 
-  return { caption, title, thumbnail, uploader: '' };
+  return { caption, title, thumbnail, uploader };
 }
-
-// ---------------------------------------------------------------------------
-// yt-dlp caption extraction (primary path for TikTok / YouTube)
 // ---------------------------------------------------------------------------
 
 const YTDLP_TIMEOUT_MS = 30000;
@@ -342,7 +344,18 @@ async function extractCaptionFromTikTokPage(url) {
   const firstLine = caption.split('\n').find(l => l.trim()) ?? '';
   const title = firstLine.slice(0, 100).trim();
 
-  return { caption, title, thumbnail, uploader: '' };
+  // TikTok embeds author data in inline JSON as "uniqueId":"username"
+  // Also available in the URL path: tiktok.com/@username/video/...
+  let tiktokUploader = '';
+  const uniqueIdMatch = html.match(/"uniqueId"\s*:\s*"([^"]+)"/);
+  if (uniqueIdMatch) {
+    tiktokUploader = `@${uniqueIdMatch[1]}`;
+  } else {
+    const urlHandleMatch = String(url || '').match(/tiktok\.com\/@([^/?#]+)/i);
+    if (urlHandleMatch) tiktokUploader = `@${urlHandleMatch[1]}`;
+  }
+
+  return { caption, title, thumbnail, uploader: tiktokUploader };
 }
 
 /**
