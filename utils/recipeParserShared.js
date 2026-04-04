@@ -1222,11 +1222,17 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   // For Next.js sites (e.g. Akis Petretzikis) the method section heading may
   // not be found by getSectionHtmlByHeading because step content lives in the
   // embedded __NEXT_DATA__ blob — fall back to the blob link extractor.
-  const methodLinkMap = options.baseUrl
-    ? (trimmedMethod
-        ? extractIngredientLinkMap(trimmedMethod, options.baseUrl)
-        : tryExtractNextDataMethodLinks(text, options.baseUrl))
-    : null;
+  // Try the scraped method section HTML first; if it yields no links (common on
+  // Next.js sites where step content lives in the __NEXT_DATA__ blob rather than
+  // in rendered HTML elements), fall back to the blob link extractor.
+  const methodLinkMap = (() => {
+    if (!options.baseUrl) return null;
+    if (trimmedMethod) {
+      const m = extractIngredientLinkMap(trimmedMethod, options.baseUrl);
+      if (m.size > 0) return m;
+    }
+    return tryExtractNextDataMethodLinks(text, options.baseUrl);
+  })();
   const ingredientsFinal = methodLinkMap && methodLinkMap.size > 0
     ? ingredientsWithLinks.map((ing) => {
         if (ing.subRecipeUrl) return ing;
