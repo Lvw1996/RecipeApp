@@ -554,13 +554,17 @@ const splitGrMethodSubSections = (sectionHtml) => {
 const extractNutritionFromLd = (node) => {
   if (!node?.nutrition) return null;
   const n = node.nutrition;
-  const parseNum = (v) => parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0;
+  // parseFloat handles '24.5g' → 24.5 correctly; parseInt with [^\d] stripping
+  // would turn '24.5g' → '245' which is wrong.
+  const parseNum = (v) => Math.round(parseFloat(String(v || '').trim()) || 0);
   const calories = parseNum(n.calories);
   const protein  = parseNum(n.proteinContent);
   const carbs    = parseNum(n.carbohydrateContent);
   const fat      = parseNum(n.fatContent);
   if (calories + protein + carbs + fat === 0) return null;
-  return { calories, protein, carbs, fat };
+  // servingSize is free-text e.g. "1 serving", "100g", "1 slice (85g)"
+  const servingSize = String(n.servingSize || '').trim() || null;
+  return { calories, protein, carbs, fat, ...(servingSize ? { servingSize } : {}) };
 };
 
 // Extracts nutrition from a __NEXT_DATA__ blob (e.g. Akis Petretzikis).
@@ -592,7 +596,7 @@ const tryExtractNextDataNutrition = (html) => {
     const result = { calories: 0, protein: 0, carbs: 0, fat: 0 };
     for (const item of nutritions) {
       const title = String(item.title || item.name || '').toLowerCase();
-      const value = parseInt(String(item.value || item.amount || '').replace(/[^\d]/g, ''), 10) || 0;
+      const value = Math.round(parseFloat(String(item.value || item.amount || '').trim()) || 0);
       if (!value) continue;
       if (/calor/.test(title))               result.calories = value;
       else if (/protein/.test(title))        result.protein  = value;
