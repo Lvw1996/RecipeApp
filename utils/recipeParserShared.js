@@ -386,6 +386,49 @@ const tryExtractNextDataInstructions = (html) => {
   return null;
 };
 
+// Companion to tryExtractNextDataInstructions: scans the same Next.js "method"
+// blob and returns a link map (anchorText → url) for any same-domain <a href>
+// links found inside step HTML. Needed because the step text is stored as raw
+// HTML in the JSON blob (links are present) but the instruction extractor strips
+// tags before storing the plain-text steps, so the links are otherwise lost.
+// Example: Akis Petretzikis step 4 links "Poultry Brine" to a sub-recipe URL.
+const tryExtractNextDataMethodLinks = (html, baseUrl) => {
+  const str = String(html || '');
+  if (!str.includes('"method"') || !baseUrl) return null;
+
+  const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let sm;
+  while ((sm = scriptRe.exec(str)) !== null) {
+    if (!sm[1].includes('"section"') || !sm[1].includes('"steps"')) continue;
+
+    const keyIdx = sm[1].indexOf('"method"');
+    if (keyIdx < 0) continue;
+    const arrStart = sm[1].indexOf('[', keyIdx);
+    if (arrStart < 0) continue;
+    let depth = 0, arrEnd = -1;
+    for (let ci = arrStart; ci < sm[1].length; ci++) {
+      if (sm[1][ci] === '[') depth++;
+      else if (sm[1][ci] === ']') { depth--; if (depth === 0) { arrEnd = ci; break; } }
+    }
+    if (arrEnd < 0) continue;
+
+    let method;
+    try { method = JSON.parse(sm[1].slice(arrStart, arrEnd + 1)); } catch { continue; }
+    if (!Array.isArray(method) || method.length === 0) continue;
+
+    // Concatenate all raw step HTML (before tag-stripping) so extractIngredientLinkMap
+    // can find <a href> links in the fallback (non-<li>) scan path.
+    const allStepHtml = method
+      .flatMap((sec) => Array.isArray(sec.steps) ? sec.steps.map((s) => String(s.step || '')) : [])
+      .join('\n');
+
+    const map = extractIngredientLinkMap(allStepHtml, baseUrl);
+    if (map.size > 0) return map;
+  }
+
+  return null;
+};
+
 // Sites like gordonramsay.com use <p><strong>Header:</strong></p> between
 // <ul class="recipe-division"> blocks in their ingredients section.
 // Takes the scoped ingredientsSection HTML (not full page).
@@ -1172,12 +1215,17 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
       : ingredients;
 
   // Second-pass: for ingredients that got no subRecipeUrl from the ingredient
-  // section, scan the method section HTML for same-domain links whose anchor
-  // text ends with the ingredient name (e.g. "Poultry Brine" → "brine").
+  // section, scan the method section HTML for same-domain <a href> links whose
+  // anchor text ends with the ingredient name (e.g. "Poultry Brine" → "brine").
   // Using ends-with rather than contains avoids false positives on common words
   // like "chicken" that appear mid-phrase in unrelated recipe title links.
-  const methodLinkMap = options.baseUrl && trimmedMethod
-    ? extractIngredientLinkMap(trimmedMethod, options.baseUrl)
+  // For Next.js sites (e.g. Akis Petretzikis) the method section heading may
+  // not be found by getSectionHtmlByHeading because step content lives in the
+  // embedded __NEXT_DATA__ blob — fall back to the blob link extractor.
+  const methodLinkMap = options.baseUrl
+    ? (trimmedMethod
+        ? extractIngredientLinkMap(trimmedMethod, options.baseUrl)
+        : tryExtractNextDataMethodLinks(text, options.baseUrl))
     : null;
   const ingredientsFinal = methodLinkMap && methodLinkMap.size > 0
     ? ingredientsWithLinks.map((ing) => {
