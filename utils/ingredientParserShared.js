@@ -421,6 +421,19 @@ export function parseIngredientString(raw) {
     }
   }
 
+  // Strip trailing weight annotations like ", approx 1.8kg" or ", about 500g" and
+  // preserve the value as a prepNote so it surfaces in the UI (e.g. shopping list)
+  // rather than being silently discarded. This is common on chef/restaurant sites that
+  // include weight guidance alongside a count ("1 leg of lamb, approx 1.8kg").
+  const approxWeightAnnotationMatch = remainder.match(
+    /,\s*((?:approx(?:imately)?|about|~|circa)\s*[\d.]+\s*(?:kg|g|lbs?|oz|ml|l)\b[^,]*)$/i
+  );
+  if (approxWeightAnnotationMatch) {
+    const annotation = approxWeightAnnotationMatch[1].trim();
+    prepNote = prepNote ? `${prepNote}; ${annotation}` : annotation;
+    remainder = remainder.slice(0, approxWeightAnnotationMatch.index).trim();
+  }
+
   const trailingPrepMatch = remainder.match(
     /\b((?:finely|roughly|thinly|coarsely|freshly|lightly|gently)\s+(?:minced|chopped|diced|sliced|grated|crushed|julienned|shredded)|(?:minced|chopped|diced|sliced|grated|crushed|julienned|shredded))\s*$/i
   );
