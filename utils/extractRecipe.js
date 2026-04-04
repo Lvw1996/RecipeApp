@@ -914,10 +914,18 @@ export async function extractRecipeFromUrl(url, options = {}) {
 
   // Target class-named ingredient containers; avoid pulling in navigation/ads.
   const ingredientEls = $('[class*="ingredient"] li, [class*="wprm-recipe-ingredient"]');
-  const fallbackIngredients = ingredientEls.length
-    ? ingredientEls.map((_, el) => $(el).text().trim()).get().filter(Boolean)
-    : $('ul li').map((_, el) => $(el).text().trim()).get()
-        .filter(t => /\d/.test(t) || /\b(cup|tsp|tbsp|g|kg|ml|oz|lb|clove|pinch)\b/i.test(t));
+  let fallbackIngredients;
+  if (ingredientEls.length) {
+    fallbackIngredients = ingredientEls.map((_, el) => $(el).text().trim()).get().filter(Boolean);
+  } else if ((sharedParsed?.ingredients?.length ?? 0) >= 3) {
+    // sharedParsed already extracted valid ingredients from the page — skip the
+    // broad ul/li scan which picks up navigation, comments, and other non-ingredient
+    // content on non-standard recipe sites (e.g. inspiredtaste.net).
+    fallbackIngredients = [];
+  } else {
+    fallbackIngredients = $('ul li').map((_, el) => $(el).text().trim()).get()
+      .filter(t => /\d/.test(t) || /\b(cup|tsp|tbsp|g|kg|ml|oz|lb|clove|pinch)\b/i.test(t));
+  }
 
   const instructionEls = $('[class*="instruction"] li, [class*="wprm-recipe-instruction"], [class*="step"] li');
   const fallbackInstructions = instructionEls.length
