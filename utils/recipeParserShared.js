@@ -549,6 +549,61 @@ const splitGrMethodSubSections = (sectionHtml) => {
   return { trimmedMethod, bonusNotes };
 };
 
+// Extracts nutrition from a Schema.org JSON-LD NutritionInformation node.
+// Returns { calories, protein, carbs, fat } or null if no usable data found.
+const extractNutritionFromLd = (node) => {
+  if (!node?.nutrition) return null;
+  const n = node.nutrition;
+  const parseNum = (v) => parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0;
+  const calories = parseNum(n.calories);
+  const protein  = parseNum(n.proteinContent);
+  const carbs    = parseNum(n.carbohydrateContent);
+  const fat      = parseNum(n.fatContent);
+  if (calories + protein + carbs + fat === 0) return null;
+  return { calories, protein, carbs, fat };
+};
+
+// Extracts nutrition from a __NEXT_DATA__ blob (e.g. Akis Petretzikis).
+// Handles "nutritions" arrays: [{ title: "Calories per portion", value: "385 kcal" }, ...]
+const tryExtractNextDataNutrition = (html) => {
+  const str = String(html || '');
+  if (!str.includes('"nutritions"')) return null;
+  const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
+  let sm;
+  while ((sm = scriptRe.exec(str)) !== null) {
+    const content = sm[1];
+    const keyIdx = content.indexOf('"nutritions"');
+    if (keyIdx < 0) continue;
+    const arrStart = content.indexOf('[', keyIdx);
+    if (arrStart < 0) continue;
+    let depth = 0;
+    let arrEnd = -1;
+    for (let i = arrStart; i < content.length; i++) {
+      if (content[i] === '[') depth++;
+      else if (content[i] === ']') {
+        depth--;
+        if (depth === 0) { arrEnd = i; break; }
+      }
+    }
+    if (arrEnd < 0) continue;
+    let nutritions;
+    try { nutritions = JSON.parse(content.slice(arrStart, arrEnd + 1)); } catch { continue; }
+    if (!Array.isArray(nutritions) || nutritions.length === 0) continue;
+    const result = { calories: 0, protein: 0, carbs: 0, fat: 0 };
+    for (const item of nutritions) {
+      const title = String(item.title || item.name || '').toLowerCase();
+      const value = parseInt(String(item.value || item.amount || '').replace(/[^\d]/g, ''), 10) || 0;
+      if (!value) continue;
+      if (/calor/.test(title))               result.calories = value;
+      else if (/protein/.test(title))        result.protein  = value;
+      else if (/carb/.test(title))           result.carbs    = value;
+      else if (/\bfat\b|lipid/.test(title))  result.fat      = value;
+    }
+    if (result.calories + result.protein + result.carbs + result.fat > 0) return result;
+  }
+  return null;
+};
+
 const extractListItems = (sectionHtml) => {
   if (!sectionHtml) return [];
 
@@ -1274,6 +1329,7 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     tags: ['Imported'],
     cuisine: asCleanLine(recipeNode?.recipeCuisine) || 'Global',
     difficulty: 'Easy',
+    nutrition: extractNutritionFromLd(recipeNode) || tryExtractNextDataNutrition(text) || null,
   };
 
   const pageText = stripHtmlToText(text || '');
