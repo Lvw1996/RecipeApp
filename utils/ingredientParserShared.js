@@ -501,6 +501,12 @@ export function parseIngredientString(raw) {
   const name = stripPriceAnnotations(rawName)
     .replace(/,\s*such\s+as\b.*$/i, '')
     .replace(/,\s*like\s+\b.*$/i, '')
+    // Strip ", try homemade X" link-text suggestions injected by some recipe sites
+    // (e.g. inspiredtaste.net: "mayonnaise, try homemade mayonnaise").
+    .replace(/,\s*try\s+\b.*$/i, '')
+    // Strip " or QTY UNIT ingredient" alternatives embedded mid-name
+    // (e.g. "chopped fresh dill or 1 teaspoon dried dill" → "chopped fresh dill").
+    .replace(/\s+or\s+(?:\d+(?:\s+\d+\/\d+|[./]\d+)?)\s*(?:tablespoons?|teaspoons?|tbsp?|tbs|tsp|cups?|ml|l|g|kg|oz|lbs?|pounds?)\b.*$/i, '')
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\bfor\s+(?:frying|sauteing|sautéing)\b.*$/i, '')
     .replace(/^salted\s+water$/i, 'water')
