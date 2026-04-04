@@ -491,6 +491,9 @@ export function parseIngredientString(raw) {
     .replace(/\bfor\s+boiling\b.*$/i, '')
     .replace(/\bfor\s+(?:frying|sauteing|sautéing)\b.*$/i, '')
     .replace(/^salted\s+water$/i, 'water')
+    // Strip weight annotations like ", approx 1.8kg" or ", about 500g" that
+    // recipe sites append to the ingredient name (e.g. "1 leg of lamb, approx 1.8kg").
+    .replace(/,\s*(?:approx(?:imately)?|about|~|circa)\s*[\d.]+\s*(?:kg|g|lbs?|oz|ml|l)\b[^,]*/gi, '')
     .replace(/[\s,;:]+$/g, '')
     .trim();
 
