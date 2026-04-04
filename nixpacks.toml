@@ -5,4 +5,4 @@
 nixPkgs = ['nodejs_20', 'yt-dlp', 'python3', 'gcc', 'gnumake']
 
 [phases.install]
-cmds = ['npm install']
+cmds = ['npm ci --omit=dev']

@@ -96,6 +96,15 @@ app.post('/import', requireAuth, standardLimiter, async (req, res) => {
       return res.status(504).json({ error: 'Importer timed out while fetching/parsing recipe' });
     }
 
+    // Upstream site rejected the server's request (e.g. Cloudflare bot protection
+    // on Railway's datacenter IPs). Return 422 so the app knows this is an upstream
+    // block rather than a server crash, and can fall back to the on-device parser.
+    const upstreamStatus = error?.response?.status;
+    if (upstreamStatus === 403 || upstreamStatus === 401 || upstreamStatus === 429) {
+      console.warn(`⚠️  Upstream site blocked the request (HTTP ${upstreamStatus}) — app will fall back to built-in parser`);
+      return res.status(422).json({ error: `Upstream site blocked the request (HTTP ${upstreamStatus})` });
+    }
+
     return res.status(500).json({ error: 'Failed to extract recipe' });
   } finally {
     clearTimeout(timeoutId);
