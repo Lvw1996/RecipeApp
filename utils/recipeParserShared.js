@@ -316,7 +316,9 @@ const tryExtractNextDataGroups = (html) => {
     const groups = [];
     for (const sec of sections) {
       const groupName = asCleanLine(String(sec.title || '')).trim();
-      if (!groupName || !Array.isArray(sec.ingredients)) continue;
+      // Allow unnamed/empty-title sections (e.g. the main ingredient group that
+      // precedes the named brine/sauce sections on the Akis Petretzikis site).
+      if (!Array.isArray(sec.ingredients)) continue;
 
       const ingredientTexts = [];
       for (const ing of sec.ingredients) {
@@ -995,7 +997,7 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     getMetaContent(text, 'name', 'og:image:url') ||
     getMetaContent(text, 'name', 'twitter:image');
 
-  const methodSection = getSectionHtmlByHeading(text, 'Method|(?:Cooking\\s+)?Instructions?|Directions?');
+  const methodSection = getSectionHtmlByHeading(text, 'Method|Execution\\s+Method|(?:Cooking\\s+)?Instructions?|Directions?');
   const { trimmedMethod, bonusNotes: methodBonusNotes } = splitGrMethodSubSections(methodSection);
   const ingredientsSection = getSectionHtmlByHeading(text, 'Ingredients?');
   const notesSection = getSectionHtmlByHeading(text, 'Notes?|Recipe\\s*Notes?|Cook\'?s?\\s*Notes?|Tips?');
@@ -1085,9 +1087,12 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
   // or an embedded data blob. Try extractors in priority order.
   // Always pass full `text` (not `ingredientsSection`) since section extraction
   // stops at the first heading element, which is often the group heading itself.
+  // Try Next.js blob before HTML acc-title: the embedded JSON has all sections
+  // including unnamed ones (fixed above), while acc-title HTML may omit the
+  // unnested main-ingredient block that precedes the first <acc-title> div.
   const htmlGroups = tryExtractWprmIngredientGroups(text)
-    || tryExtractAccTitleGroups(text)
     || tryExtractNextDataGroups(text)
+    || tryExtractAccTitleGroups(text)
     || tryExtractStrongHeaderGroups(ingredientsSection);
   if (htmlGroups) {
     ingredients = htmlGroups.flatMap(({ groupName, ingredientTexts }) => [
@@ -1166,7 +1171,28 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
         })
       : ingredients;
 
-  const linkedCount = ingredientsWithLinks.filter(i => i.subRecipeUrl).length;
+  // Second-pass: for ingredients that got no subRecipeUrl from the ingredient
+  // section, scan the method section HTML for same-domain links whose anchor
+  // text ends with the ingredient name (e.g. "Poultry Brine" → "brine").
+  // Using ends-with rather than contains avoids false positives on common words
+  // like "chicken" that appear mid-phrase in unrelated recipe title links.
+  const methodLinkMap = options.baseUrl && trimmedMethod
+    ? extractIngredientLinkMap(trimmedMethod, options.baseUrl)
+    : null;
+  const ingredientsFinal = methodLinkMap && methodLinkMap.size > 0
+    ? ingredientsWithLinks.map((ing) => {
+        if (ing.subRecipeUrl) return ing;
+        const nameLower = (ing.name || '').toLowerCase();
+        if (nameLower.length < 4) return ing;
+        const escaped = nameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const endsWithRe = new RegExp(`\\b${escaped}$`);
+        for (const [anchor, url] of methodLinkMap) {
+          if (endsWithRe.test(anchor)) return { ...ing, subRecipeUrl: url };
+        }
+        return ing;
+      })
+    : ingredientsWithLinks;
+  const linkedCount = ingredientsFinal.filter(i => i.subRecipeUrl).length;
   const servesMatch = decodeEntities(text).match(/Serves\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
   const notes = (() => {
     const base = stripHtmlToText(notesSection || '') || stripHtmlToText(String(recipeNode?.recipeNotes || recipeNode?.notes || recipeNode?.description || ''));
@@ -1188,7 +1214,7 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     prepTime: prepMinutes,
     cookTime: cookMinutes,
     servings: parseServings(recipeNode?.recipeYield || servesMatch?.[1] || ''),
-    ingredients: ingredientsWithLinks,
+    ingredients: ingredientsFinal,
     instructions,
     ...(notes ? { notes } : {}),
     tags: ['Imported'],
