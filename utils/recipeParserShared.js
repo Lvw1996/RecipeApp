@@ -140,7 +140,9 @@ const extractIngredientLinkMap = (sectionHtml, baseUrl) => {
   // pages that recipe sites commonly link from ingredient text (e.g. BBC Good Food
   // links "red onion" to /glossary/red-onion). We only want same-domain links
   // that point to actual recipe pages, not ingredient guides or category pages.
-  const NON_RECIPE_PATH_RE = /^\/(?:glossary|ingredients?|ingredient-substitutes?|substitutes?|guide|guides|how-to|howto|technique|techniques|tips?|learn|about|collections?|search|topics?|seasonal|new|recipes\/collection)\//i;
+  // Also blocks WordPress taxonomy/archive paths: /category/, /tag/, /author/,
+  // and pagination paths: /page/ (e.g. /page/2/).
+  const NON_RECIPE_PATH_RE = /^\/(?:glossary|ingredients?|ingredient-substitutes?|substitutes?|guide|guides|how-to|howto|technique|techniques|tips?|learn|about|collections?|search|topics?|seasonal|new|recipes\/collection|category|tag|tags|author|authors|page|archive|archives)\//i;
 
   // Slug-segment blocklist: catches how-to/what-is patterns embedded anywhere in
   // the URL path (e.g. "/how-to-cook-rice/", "/what-is-garlic/", "/guide-to-ghee/").
