@@ -208,16 +208,38 @@ const tryExtractWprmIngredientGroups = (html) => {
   const str = String(html || '');
   if (!str.includes('wprm-recipe-ingredient-group')) return null;
 
+  // Helper: extract WPRM <li> ingredient texts from an HTML chunk.
+  const extractLiTexts = (chunk) => {
+    const texts = [];
+    const liRe = /<li[^>]*class="[^"]*wprm-recipe-ingredient[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
+    let m;
+    while ((m = liRe.exec(chunk)) !== null) {
+      const t = asCleanLine(decodeEntities(String(m[1]).replace(/<[^>]+>/g, ' '))).trim();
+      if (t) texts.push(t);
+    }
+    return texts;
+  };
+
   // Split by group-name h4 headings. A capturing group in split() interleaves
   // the result as [before, heading0, content0, heading1, content1, ...].
   // Matches both wprm-recipe-ingredient-group-name and wprm-recipe-ingredient-groupe-name.
   const parts = str.split(/(<h4[^>]*wprm-recipe-ingredient-group[^>]*>[\s\S]*?<\/h4>)/i);
-  // parts[0] = html before first heading (discard)
+  // parts[0] = html before first heading; may contain an unnamed first ingredient group
   // parts[1] = full <h4> tag for group 1
   // parts[2] = html between group 1 and group 2 heading (contains group 1's <li>s)
   // parts[3] = full <h4> tag for group 2  …etc.
 
   const groups = [];
+
+  // Collect any WPRM ingredients that precede the first named section heading.
+  // e.g. spendwithpennies.com "Easy Homemade Lasagna" has an unnamed "For the
+  // Lasagna" group (noodles, mozzarella, parmesan) before the named "Tomato
+  // Sauce" and "Cheese Mixture" sections.
+  const preGroupTexts = extractLiTexts(parts[0] || '');
+  if (preGroupTexts.length > 0) {
+    groups.push({ groupName: '', ingredientTexts: preGroupTexts });
+  }
+
   for (let i = 1; i < parts.length; i += 2) {
     const headingHtml = parts[i];
     const contentHtml = parts[i + 1] || '';
@@ -228,14 +250,7 @@ const tryExtractWprmIngredientGroups = (html) => {
       .replace(/:+\s*$/, '').trim();
     if (!name) continue;
 
-    const ingredientTexts = [];
-    const liRe = /<li[^>]*class="[^"]*wprm-recipe-ingredient[^"]*"[^>]*>([\s\S]*?)<\/li>/gi;
-    let m;
-    while ((m = liRe.exec(contentHtml)) !== null) {
-      const liText = asCleanLine(decodeEntities(String(m[1]).replace(/<[^>]+>/g, ' '))).trim();
-      if (liText) ingredientTexts.push(liText);
-    }
-
+    const ingredientTexts = extractLiTexts(contentHtml);
     groups.push({ groupName: name, ingredientTexts });
   }
 
