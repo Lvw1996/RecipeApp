@@ -259,50 +259,133 @@ Output ONLY valid JSON — no markdown, no explanation:
 {
   "items": [
     {
-      "name": "string — generic pantry ingredient name (see rules and examples below)",
-      "quantity": number — numeric quantity (weight in grams if sold by weight, count otherwise),
+      "name": "string — generic pantry ingredient name in English (see rules below)",
+      "quantity": number — purchased quantity: grams when sold by weight, millilitres when sold by volume, whole number count otherwise,
       "unit": "string — g | ml | pcs",
       "barcode": "string | null — EAN/UPC barcode number if printed on the receipt, else null"
     }
   ]
 }
 
-Name rules — reduce every product to its simplest generic pantry ingredient name:
-- Remove ALL brand/store prefixes: WW, Woolworths, Coles, Aldi, IGA, Macro, Homebrand, Select, Essentials, Devondale, Sanitarium, Uncle Tobys, San Remo, Leggo's, Praise, Continental, Schwartz, MasterFoods, etc.
-- Remove pack size, weight, volume: "2L", "500g", "12pk", "6x", "1kg", "375ml" etc.
-- Remove descriptors that specify the product variant ONLY IF a simpler catalog name exists:
-    e.g. "Extra Virgin Olive Oil" → "olive oil"  |  "Full Cream Milk" → "full cream milk"  |  "Greek Style Yoghurt" → "greek yogurt"
-- Keep descriptors that meaningfully distinguish items in a pantry:
-    "baby spinach" NOT "spinach" when that's what was bought  |  "cherry tomato" vs "tomato"  |  "chicken breast" vs "chicken thigh"
-- Remove trailing tax/weight codes: " D", " A", " C ea", " T", " *"
-- Output English names regardless of receipt language
-- Use lowercase names
+════════════════════════════════════════
+QUANTITY RULES
+════════════════════════════════════════
+Receipts often show weight-sold items as:  <weight> x <price-per-kg>
+e.g.  "0.984 x 14,99"  means 0.984 kg was purchased.
 
-Examples (receipt text → name output):
-  "WW Full Cream Milk 2L"              → "full cream milk"
-  "Coles Chicken Breast 500g"          → "chicken breast"
-  "Macro Org Free Range Eggs 12pk"     → "egg"
-  "EVOO Spray 200ml"                   → "cooking spray"
-  "San Remo Penne 500g"               → "penne"
-  "Devondale Butter Unsalted 250g"     → "butter"
-  "WW Baby Spinach 120g"               → "baby spinach"
-  "Coles Greek Yoghurt 1kg"            → "greek yogurt"
-  "MasterFoods Garlic Powder 55g"      → "garlic powder"
-  "Coles Diced Tomatoes 400g"          → "canned tomato"
-  "WW Frozen Peas 1kg"                 → "frozen peas"
-  "Coles Sour Cream 300ml"             → "sour cream"
-  "Coca Cola Zero 1.25L"               → "coke zero"
-  "Red Rock Deli Sea Salt Chips 165g"  → "chips"
-  "Lurpak Butter 500g"                 → "butter"
-  "Woolworths Select Pasta Sauce 500g" → "pasta sauce"
-  "Continental Chicken Stock 1L"       → "chicken stock"
-  "Coles Panko Breadcrumbs 200g"       → "breadcrumb"
+- If sold by weight (kg on receipt): multiply kg × 1000 → output grams (g)
+    0.984 kg  →  quantity: 984,  unit: "g"
+    1.2 kg    →  quantity: 1200, unit: "g"
+- If sold by volume (L on receipt): multiply L × 1000 → output millilitres (ml)
+    1 L       →  quantity: 1000, unit: "ml"
+    0.5 L     →  quantity: 500,  unit: "ml"
+- If the pack already states grams/ml on its label (e.g. "500G", "P0500G"), use that number directly.
+- If sold by count (eggs, bread loaf, etc.): output the count as a whole number, unit: "pcs"
+    "6 x 0.86"  (6 items)  →  quantity: 6,  unit: "pcs"
+- When a line shows "N x price" and N is clearly a count multiplier (integer, small number), use N as the count.
 
-Ignore (do not include in output):
-- Store name, date, time, cashier, terminal, loyalty points, receipts numbers
-- Total, subtotal, GST, VAT, tax, change, EFTPOS, card payment lines
-- Non-food items: batteries, cleaning products, clothing, cosmetics
-- Discount/savings lines
+════════════════════════════════════════
+NAME RULES
+════════════════════════════════════════
+Reduce every product name to its simplest generic pantry ingredient name in English lowercase.
+
+1. STRIP store/brand prefixes and suffixes.
+   Common prefixes that mean nothing: C, E, G, M, B (single-letter category codes)
+   Australian: WW, Woolworths, Coles, Aldi, IGA, Macro, Homebrand, Select, Essentials,
+               Devondale, Sanitarium, Uncle Tobys, San Remo, Leggo's, Praise, Continental,
+               Schwartz, MasterFoods
+   European:   PD, PDOCE (Pingo Doce), CONT (Continente), LIDL, ALDI, MERC (Mercadona),
+               CARR (Carrefour), ICA, REWE, EDEKA, TESCO, SAINSBURY, WAITROSE, M&S, ASDA,
+               SPAR, CONAD, ESSELUNGA, DIA, EROSKI, AH (Albert Heijn), JUMBO, DELHAIZE,
+               COLRUYT, PICARD, LECLERC, INTERMARCHE, CASINO, MONOPRIX, FRANPRIX
+
+2. STRIP size/weight/volume codes embedded in the name:
+   "500G", "1KG", "P0500G", "PO400G", "1L", "12UN", "6X", "200ML", "1KG", "350G" etc.
+
+3. STRIP receipt abbreviation codes that are NOT part of the ingredient:
+   ATP, TC, PK, SAC (= bag/sack), SLT (= salted), C/QUI, S/OS, GL, FAT (= sliced), FORM,
+   UHT, M/G (= full fat), MET, TUN, SOLO, COSTA, POSTA (= steak/portion when used as a code)
+
+4. TRANSLATE foreign-language ingredient words to English:
+   Portuguese → English:
+     FRANGO → chicken | FRANGO PEITO → chicken breast | FRANGO PERNIL → chicken leg
+     VITELO / VITELLO → veal | VITELO PA E ACEM → veal shoulder | LOMBO → loin
+     SALMAO / SALMÃO → salmon | ATUM → tuna | BACALHAU → cod | PESCADA → hake
+     CEBOLA → onion | TOMATE → tomato | POLPA TOMATE → tomato passata
+     ARROZ → rice | ARROZ BASMATI → basmati rice
+     PAO / PÃO → bread | PAO FORMA → sandwich bread | PAO HAMBURGUER → burger bun
+     LEITE → milk | MANTEIGA → butter | OVO / OVOS → egg | QUEIJO → cheese
+     CENOURA → carrot | BATATA → potato | ALHO → garlic | COUVE → cabbage
+     ESPINAFRES → spinach | ERVILHAS → peas | FEIJAO → beans | LENTILHAS → lentils
+     FIAMBRE → ham | PRESUNTO → prosciutto/cured ham | LINGUICA → chorizo sausage
+     AZEITE → olive oil | OLEO → oil | VINAGRE → vinegar | SAL → salt
+     ACUCAR → sugar | FARINHA → flour | OVOS → eggs | NATAS → cream
+     IOGURTE → yogurt | MANTEIGA → butter | REQUEIJAO → ricotta
+     LEGUMES → vegetables | MISTURA → mixed | CONGELADOS → frozen
+     OREGAO / OREGAOS → oregano | COMINHOS → cumin | PIMENTA → pepper
+   Spanish: POLLO → chicken | TERNERA → veal/beef | LECHE → milk | HUEVOS → eggs
+            TOMATE → tomato | ACEITE → oil | HARINA → flour | ARROZ → rice
+   French: POULET → chicken | LAIT → milk | OEUFS → eggs | BEURRE → butter
+           FARINE → flour | POMME DE TERRE → potato | TOMATE → tomato
+   German: HÄHNCHEN → chicken | MILCH → milk | EIER → eggs | BUTTER → butter
+           MEHL → flour | KARTOFFEL → potato | KAROTTE → carrot
+   Italian: POLLO → chicken | LATTE → milk | UOVA → eggs | BURRO → butter
+
+5. KEEP descriptors that distinguish meaningful pantry variants:
+   "chicken breast" not just "chicken" | "salmon steak" vs "salmon fillet"
+   "full cream milk" | "basmati rice" | "cherry tomato" | "greek yogurt"
+   "baby spinach" | "veal shoulder" | "chicken thigh"
+
+6. SIMPLIFY where a generic name is more useful than an overly specific one:
+   "extra virgin olive oil" → "olive oil"
+   "panko breadcrumbs" → "breadcrumb"
+   "diced canned tomatoes" → "canned tomato"
+
+════════════════════════════════════════
+EXAMPLES
+════════════════════════════════════════
+Receipt line (any language)             → name | qty | unit
+─────────────────────────────────────────────────────────────
+"WW Full Cream Milk 2L"                → "full cream milk"       | 2000 | ml
+"Coles Chicken Breast 500g"            → "chicken breast"        |  500 | g
+"Macro Org Free Range Eggs 12pk"       → "egg"                   |   12 | pcs
+"San Remo Penne 500g"                  → "penne"                 |  500 | g
+"Devondale Butter Unsalted 250g"       → "butter"                |  250 | g
+"WW Baby Spinach 120g"                 → "baby spinach"          |  120 | g
+"Coles Greek Yoghurt 1kg"              → "greek yogurt"          | 1000 | g
+"MasterFoods Garlic Powder 55g"        → "garlic powder"         |   55 | g
+"Coles Diced Tomatoes 400g"            → "canned tomato"         |  400 | g
+"Continental Chicken Stock 1L"         → "chicken stock"         | 1000 | ml
+"C L UHT M/G PDOCE 1L"               → "full cream milk"       | 1000 | ml
+"C SALMAO POSTA KG  0.984 x 14,99"   → "salmon"                |  984 | g
+"C FRANGO PERKIN ATP PD  0.705x4,99" → "chicken"               |  705 | g
+"C FRANGO PEITO TC  2.402 x 7,49"    → "chicken breast"        | 2402 | g
+"C VITELO PA E ACEM  0.612 x 13,99"  → "veal shoulder"         |  612 | g
+"C ATUM GL COSTA 1G"                  → "tuna"                  |    1 | pcs
+"G POLPA TOMATE PD 500G"              → "tomato passata"        |  500 | g
+"C ARROZ BASMATI PD"                  → "basmati rice"          |    1 | pcs
+"G PAO FORMA PD 600G"                 → "sandwich bread"        |  600 | g
+"C CEBOLA SAC 1KG PD"                 → "onion"                 | 1000 | g
+"C DV L SOLO PD 12UN"                 → "egg"                   |   12 | pcs
+"C QJ FAT PO 200G"                    → "cheese"                |  200 | g
+"C LEG SLT C/QUI P0350G"              → "vegetables"            |  350 | g
+"C MIST VEG SLT PD400G"               → "mixed vegetables"      |  400 | g
+"E TEM MAN OREG PO 300G"              → "oregano"               |  300 | g
+"C L UHT M/G PDOCE 1L  6 x 0,86"     → "full cream milk"       | 6000 | ml
+"C HAN ANENO PD"                      → "pineapple"             |    1 | pcs
+"Lurpak Butter 500g"                  → "butter"                |  500 | g
+"Coca Cola Zero 1.25L"                → "coke zero"             | 1250 | ml
+"WW Frozen Peas 1kg"                  → "frozen peas"           | 1000 | g
+
+════════════════════════════════════════
+IGNORE (do not include in output)
+════════════════════════════════════════
+- Store name, date, time, cashier, terminal, loyalty card info
+- Total, subtotal, tax (IVA/GST/VAT), change, payment method lines
+- Discount / savings / "Poupança" lines
+- Non-food items: detergent, cleaning products, batteries, clothing, cosmetics
+  (e.g. "E SOC LAVAGEM" = laundry detergent → exclude)
+- Delivery fees, bag charges, loyalty point balances
 
 If the receipt is unreadable or contains no food items, return { "items": [] }`;
 
