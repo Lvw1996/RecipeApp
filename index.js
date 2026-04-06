@@ -378,6 +378,20 @@ Receipt line (any language)             → name | qty | unit
 "WW Frozen Peas 1kg"                  → "frozen peas"           | 1000 | g
 
 ════════════════════════════════════════
+DUPLICATE ITEMS — CRITICAL
+════════════════════════════════════════
+If the same ingredient appears as multiple SEPARATE LINE ITEMS on the receipt
+(e.g. four packs of veal each with a different weight scanned individually),
+output EACH as a SEPARATE object in the "items" array.
+Do NOT combine, deduplicate, or sum them up.
+Each physical purchase line = one entry.
+
+Example: three veal packs on receipt → three separate items:
+  { "name": "veal shoulder", "quantity": 612, "unit": "g" }
+  { "name": "veal shoulder", "quantity": 616, "unit": "g" }
+  { "name": "veal shoulder", "quantity": 618, "unit": "g" }
+
+════════════════════════════════════════
 IGNORE (do not include in output)
 ════════════════════════════════════════
 - Store name, date, time, cashier, terminal, loyalty card info
