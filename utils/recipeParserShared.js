@@ -641,6 +641,18 @@ const tryExtractNextDataNutrition = (html) => {
   return null;
 };
 
+// Extracts nutrition from visible HTML text for sites where JSON-LD omits some macros.
+// Used only as a fill-in when JSON-LD has partial data (e.g. missing proteinContent).
+const tryExtractHtmlNutrition = (html) => {
+  const text = String(html || '').replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
+  const grab = (re) => { const m = text.match(re); return m ? Math.round(parseFloat(m[1])) || 0 : 0; };
+  const calories = grab(/\bcalories?\b[^\d]*([\d.]+)/i) || grab(/([\d.]+)\s*(?:cal|kcal)\b/i);
+  const protein  = grab(/\bprotein\b[^\d]*([\d.]+)\s*g/i);
+  const carbs    = grab(/\btotal\s+carbs?\b[^\d]*([\d.]+)\s*g/i) || grab(/\bcarbo(?:hydrate)?s?\b[^\d]*([\d.]+)\s*g/i);
+  const fat      = grab(/\btotal\s+fat\b[^\d]*([\d.]+)\s*g/i) || grab(/\bfat\b[\D]{0,6}([\d.]+)\s*g/i);
+  return (calories || protein || carbs || fat) ? { calories, protein, carbs, fat } : null;
+};
+
 const extractListItems = (sectionHtml) => {
   if (!sectionHtml) return [];
 
@@ -1385,7 +1397,23 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     tags: ['Imported'],
     cuisine: asCleanLine(recipeNode?.recipeCuisine) || 'Global',
     difficulty: 'Easy',
-    nutrition: extractNutritionFromLd(recipeNode) || tryExtractNextDataNutrition(text) || null,
+    nutrition: (() => {
+      const ld = extractNutritionFromLd(recipeNode);
+      const nd = tryExtractNextDataNutrition(text);
+      const base = ld || nd;
+      if (!base) return null;
+      // Fill any zero macros from visible HTML (e.g. healthyfood.com omits proteinContent in JSON-LD)
+      if (!base.protein || !base.carbs || !base.fat || !base.calories) {
+        const html = tryExtractHtmlNutrition(text);
+        if (html) {
+          if (!base.calories && html.calories) base.calories = html.calories;
+          if (!base.protein  && html.protein)  base.protein  = html.protein;
+          if (!base.carbs    && html.carbs)    base.carbs    = html.carbs;
+          if (!base.fat      && html.fat)      base.fat      = html.fat;
+        }
+      }
+      return base;
+    })(),
   };
 
   const pageText = stripHtmlToText(text || '');
