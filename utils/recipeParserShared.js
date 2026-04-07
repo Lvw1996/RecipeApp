@@ -106,8 +106,11 @@ const normalizeImageUrl = (value, baseUrl = '') => {
 };
 
 const getSectionHtmlByHeading = (html, headingPattern) => {
+  // Allow inline tags (anchors, spans, etc.) before/after the heading text,
+  // e.g. <h2><a name="ingredients"></a>Ingredients</h2> or
+  //      <h2><span class="label">Ingredients</span></h2>.
   const regex = new RegExp(
-    `<(h1|h2|h3|h4)[^>]*>\\s*(?:${headingPattern})\\s*<\\/\\1>([\\s\\S]*?)(?=<(?:h1|h2|h3|h4)[^>]*>|$)`,
+    `<(h1|h2|h3|h4)[^>]*>\\s*(?:<[^>]+>\\s*)*(?:${headingPattern})\\s*(?:<[^>]+>\\s*)*<\\/\\1>([\\s\\S]*?)(?=<(?:h1|h2|h3|h4)[^>]*>|$)`,
     'i'
   );
   const match = String(html || '').match(regex);
@@ -1109,12 +1112,30 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     getMetaContent(text, 'property', 'og:title') ||
     asCleanLine(decodeEntities((text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || ''));
 
-  const thumbnailFromHtml =
-    getMetaContent(text, 'property', 'og:image') ||
-    getMetaContent(text, 'property', 'og:image:url') ||
-    getMetaContent(text, 'name', 'og:image') ||
-    getMetaContent(text, 'name', 'og:image:url') ||
-    getMetaContent(text, 'name', 'twitter:image');
+  const thumbnailFromHtml = (() => {
+    const fromMeta =
+      getMetaContent(text, 'property', 'og:image') ||
+      getMetaContent(text, 'property', 'og:image:url') ||
+      getMetaContent(text, 'name', 'og:image') ||
+      getMetaContent(text, 'name', 'og:image:url') ||
+      getMetaContent(text, 'name', 'twitter:image');
+    if (fromMeta) return fromMeta;
+    // Fallback: find an <img> whose alt text overlaps the recipe title
+    // (catches sites like Drupal gov sites that have no og:image meta tag).
+    const THUMB_PLACEHOLDER_RE = /placeholder|spinner|loading|blank|nophoto|spacer|pixel|1x1/i;
+    const titleWords = String(titleFromHtml || '').toLowerCase().split(/\s+/).filter(w => w.length > 3);
+    const imgTagRe = /<img\b([^>]+)>/gi;
+    let m;
+    while ((m = imgTagRe.exec(text)) !== null) {
+      const attrs = m[1];
+      const srcM = attrs.match(/(?:src|data-src|data-lazy-src)=["']([^"']+)["']/i);
+      if (!srcM || THUMB_PLACEHOLDER_RE.test(srcM[1])) continue;
+      const altM = attrs.match(/alt=["']([^"']*)["']/i);
+      const alt = String(altM ? altM[1] : '').toLowerCase();
+      if (titleWords.length && titleWords.some(w => alt.includes(w))) return srcM[1];
+    }
+    return '';
+  })();
 
   const methodSection = getSectionHtmlByHeading(text, 'Method|Execution\\s+Method|(?:Cooking\\s+)?Instructions?|Directions?');
   const { trimmedMethod, bonusNotes: methodBonusNotes } = splitGrMethodSubSections(methodSection);
