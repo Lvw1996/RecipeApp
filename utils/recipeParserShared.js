@@ -36,6 +36,19 @@ const parseServings = (value) => {
   return firstNumber ? Math.max(1, Math.round(Number(firstNumber[0]))) : 1;
 };
 
+// Returns { servingsMin, servingsMax } when the raw yield value is a range (e.g. "8-10"), otherwise {}.
+const extractServingsRange = (value) => {
+  let str = '';
+  if (Array.isArray(value)) str = String(value[0] || '');
+  else if (value && typeof value === 'object') str = String(value.value ?? value['@value'] ?? '');
+  else str = String(value || '');
+  const m = str.match(/(\d+(?:\.\d+)?)\s*(?:to|[-\u2013\u2014])\s*(\d+(?:\.\d+)?)/i);
+  if (!m) return {};
+  const a = Math.round(Number(m[1]));
+  const b = Math.round(Number(m[2]));
+  return a > 0 && b > 0 && a !== b ? { servingsMin: Math.min(a, b), servingsMax: Math.max(a, b) } : {};
+};
+
 const parseAttributes = (tag = '') => {
   const attrs = {};
   const attrRe = /([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(["'])([\s\S]*?)\2/g;
@@ -1365,6 +1378,7 @@ export const parseImportedRecipeFromHtml = (html, options = {}) => {
     prepTime: prepMinutes,
     cookTime: cookMinutes,
     servings: parseServings(recipeNode?.recipeYield || servesMatch?.[1] || ''),
+    ...extractServingsRange(recipeNode?.recipeYield || servesMatch?.[1] || ''),
     ingredients: ingredientsFinal,
     instructions,
     ...(notes ? { notes } : {}),
